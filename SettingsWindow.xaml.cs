@@ -298,6 +298,7 @@ public partial class SettingsWindow : Window
         new(ToggleSpotlightBox, "Toggle spotlight", s => s.ToggleSpotlight, (s, v) => s.ToggleSpotlight = v, true),
         new(ToggleMagnifierBox, "Toggle zoom", s => s.ToggleMagnifier, (s, v) => s.ToggleMagnifier = v, true),
         new(TogglePinnedLensBox, "New pinned lens", s => s.TogglePinnedLens, (s, v) => s.TogglePinnedLens = v, true),
+        new(NewStaticPinBox, "New static pin", s => s.NewStaticPin, (s, v) => s.NewStaticPin = v, true),
         new(ToggleRegionMaskBox, "Select mask area", s => s.ToggleRegionMask, (s, v) => s.ToggleRegionMask = v, true),
         new(ClearRegionMasksBox, "Clear masks", s => s.ClearRegionMasks, (s, v) => s.ClearRegionMasks = v, true),
         new(ToggleRegionSpotlightBox, "Select spotlight area", s => s.ToggleRegionSpotlight, (s, v) => s.ToggleRegionSpotlight = v, true),

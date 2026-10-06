@@ -15,6 +15,7 @@ public sealed class ShortcutSettings
     public string HoldSpotlight { get; set; } = "Alt+S";
     public string ToggleMagnifier { get; set; } = "Ctrl+Alt+V";
     public string TogglePinnedLens { get; set; } = "Ctrl+Alt+F";
+    public string NewStaticPin { get; set; } = "Alt+Shift+W";
     public string ToggleRegionMask { get; set; } = "Ctrl+Alt+R";
     public string ClearRegionMasks { get; set; } = DisabledShortcut;
     public string ToggleRegionSpotlight { get; set; } = "Ctrl+Alt+Shift+S";
@@ -64,6 +65,7 @@ public sealed class ShortcutSettings
         HoldSpotlight = HoldSpotlight,
         ToggleMagnifier = ToggleMagnifier,
         TogglePinnedLens = TogglePinnedLens,
+        NewStaticPin = NewStaticPin,
         ToggleRegionMask = ToggleRegionMask,
         ClearRegionMasks = ClearRegionMasks,
         ToggleRegionSpotlight = ToggleRegionSpotlight,
@@ -114,6 +116,7 @@ public sealed class ShortcutSettings
         HoldSpotlight = NormalizeShortcut(HoldSpotlight, "Alt+S");
         ToggleMagnifier = NormalizeShortcut(ToggleMagnifier, "Ctrl+Alt+V");
         TogglePinnedLens = NormalizeShortcut(TogglePinnedLens, "Ctrl+Alt+F");
+        NewStaticPin = NormalizeShortcut(NewStaticPin, "Alt+Shift+W");
         ToggleRegionMask = NormalizeShortcut(ToggleRegionMask, "Ctrl+Alt+R");
         ClearRegionMasks = NormalizeShortcut(ClearRegionMasks, DisabledShortcut);
         ToggleRegionSpotlight = NormalizeShortcut(ToggleRegionSpotlight, "Ctrl+Alt+Shift+S");

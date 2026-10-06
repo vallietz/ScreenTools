@@ -20,6 +20,8 @@ internal sealed class TrayMenuItems
     public required ToolStripMenuItem MagnifierItem { get; init; }
     public required ToolStripMenuItem PinnedLensItem { get; init; }
     public required ToolStripMenuItem ClosePinnedLensesItem { get; init; }
+    public required ToolStripMenuItem StaticPinItem { get; init; }
+    public required ToolStripMenuItem CloseStaticPinsItem { get; init; }
     public required ToolStripMenuItem RegionMaskItem { get; init; }
     public required ToolStripMenuItem ClearRegionMasksItem { get; init; }
     public required ToolStripMenuItem FadingAnnotationsItem { get; init; }

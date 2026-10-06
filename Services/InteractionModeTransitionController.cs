@@ -219,6 +219,7 @@ internal sealed class InteractionModeTransitionController
     private static bool IsRectSelectionMode(InteractionMode mode)
     {
         return mode is InteractionMode.PinnedLensSelect
+            or InteractionMode.StaticPinSelect
             or InteractionMode.RegionMaskSelect
             or InteractionMode.ScreenshotRegionSelect
             or InteractionMode.RegionSpotlightSelect;

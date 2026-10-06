@@ -36,7 +36,8 @@ internal sealed class RectSelectionRenderer
         RectOverlayVisual visual,
         ScreenRect screenBounds,
         double surfaceWidth,
-        double surfaceHeight)
+        double surfaceHeight,
+        bool showSelectionFill = true)
     {
         if (!visual.Rect.Intersects(screenBounds))
         {
@@ -44,7 +45,7 @@ internal sealed class RectSelectionRenderer
         }
 
         var rect = _toRect(visual.Rect);
-        DrawSelectionRectangle(drawingContext, rect, visual.IsDraft);
+        DrawSelectionRectangle(drawingContext, rect, visual.IsDraft, showSelectionFill);
         if (visual.ShowHandles)
         {
             _drawRectHandles(drawingContext, rect);
@@ -58,17 +59,20 @@ internal sealed class RectSelectionRenderer
 
     public void DrawSelectionRectangle(DrawingContext drawingContext, ScreenRect screenRect, bool isDraft)
     {
-        DrawSelectionRectangle(drawingContext, _toRect(screenRect), isDraft);
+        DrawSelectionRectangle(drawingContext, _toRect(screenRect), isDraft, showSelectionFill: true);
     }
 
-    private void DrawSelectionRectangle(DrawingContext drawingContext, Rect rect, bool isDraft)
+    private void DrawSelectionRectangle(DrawingContext drawingContext, Rect rect, bool isDraft, bool showSelectionFill)
     {
         if (rect.Width < 1 || rect.Height < 1)
         {
             return;
         }
 
-        drawingContext.DrawRectangle(_getBrush(Colors.DeepSkyBlue, isDraft ? 0.045 : 0.07), null, rect);
+        if (showSelectionFill)
+        {
+            drawingContext.DrawRectangle(_getBrush(Colors.DeepSkyBlue, isDraft ? 0.045 : 0.07), null, rect);
+        }
         drawingContext.DrawRectangle(null, _createPen(Colors.Black, 0.32, 3.2), rect);
         drawingContext.DrawRectangle(null, _selectionDashPen, rect);
     }

@@ -168,10 +168,29 @@ internal sealed class AnnotationDocument
             PushUndo();
             Draft.MarkCreated(_clockProvider());
             _shapes.Add(Draft.Clone());
+            if (Draft.Tool == AnnotationTool.Arrow)
+            {
+                SelectSingleIndexCore(_shapes.Count - 1, objectEdit: true);
+            }
         }
 
         Draft = null;
         OnChanged();
+    }
+
+    /// <summary>
+    /// Commits the current live stroke with a different final tool. Static Pin uses
+    /// this to preview an Arrow as a line until the pointer is released, avoiding
+    /// an arrowhead at every intermediate endpoint.
+    /// </summary>
+    public void CommitDraftAs(AnnotationTool tool)
+    {
+        if (Draft is not null)
+        {
+            Draft.Tool = tool;
+        }
+
+        CommitStroke();
     }
 
     public void BeginSelection(ScreenPoint start)

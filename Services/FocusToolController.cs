@@ -44,6 +44,15 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
     private readonly CaptureController _capture;
     private readonly BoardController _boards;
     private readonly PinnedLensController _pinnedLenses;
+    private readonly StaticPinController _staticPins;
+    private readonly HashSet<StaticPinWindow> _staticPinDrawingTargets = [];
+    private bool _staticPinAnnotationGesture;
+    private bool _staticPinOutsideDraftActive;
+    private AnnotationTool _staticPinAnnotationTool;
+    private ScreenPoint _staticPinLastPoint;
+    private StaticPinWindow? _staticPinArrowDraftPin;
+    private StaticPinWindow? _staticPinArrowEditPin;
+    private ScreenPoint _staticPinOutsideDraftEnd;
     private readonly LiveAdjustmentHudController _liveAdjustmentHud = new();
     private readonly MagnifierController _magnifier;
     private readonly GlobalHotKeyController _hotKeys;
@@ -59,6 +68,7 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
     private SettingsWindow? _settingsWindow;
     private readonly RegionMaskContextMenuController _regionMaskContextMenu;
     private bool _disposed;
+    private bool _eraserTargetsStaticPins;
     private InteractionMode _mode = InteractionMode.Passthrough;
 
     public event EventHandler? StateChanged;
@@ -68,6 +78,8 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
     public InteractionMode Mode => _mode;
     public LaserActivationMode ActivationMode => Settings.GetLaserActivationMode();
     public AnnotationTool CurrentTool => Settings.GetAnnotationTool();
+    public bool IsMoveDragging => _annotationMouse.IsMovingSelection;
+    public bool HasMoveSelection => CurrentTool == AnnotationTool.Move && _annotations.HasSelection;
     public AnnotationDocument Annotations => _annotations;
     public bool LaserVisuallyActive => _pointerVisuals.LaserVisuallyActive;
     public bool CursorHighlightEnabled => Settings.GetCursorHighlightActivationMode() == LaserActivationMode.Always;
@@ -81,6 +93,9 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
     public bool PinnedLensActive => _pinnedLenses.HasLenses;
     public int PinnedLensCount => _pinnedLenses.Count;
     public bool PinnedLensSelectionActive => _mode == InteractionMode.PinnedLensSelect;
+    public bool StaticPinActive => _staticPins.Count > 0;
+    public int StaticPinCount => _staticPins.Count;
+    public bool StaticPinSelectionActive => _mode == InteractionMode.StaticPinSelect;
     public bool RegionMaskActive => _regionMasks.HasMasks;
     public int RegionMaskCount => _regionMasks.Count;
     public bool RegionMaskSelectionActive => _mode == InteractionMode.RegionMaskSelect;
@@ -191,6 +206,17 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
             (title, text) => _trayIcon?.ShowMessage(title, text),
             ShowPinnedLensZoomHud,
             () => StateChanged?.Invoke(this, EventArgs.Empty));
+        _staticPins = new StaticPinController(
+            () => _disposed,
+            _pinnedLenses.ReassertTopmost,
+            _pinnedLenses.ReassertContextMenuTopmost,
+            () => StateChanged?.Invoke(this, EventArgs.Empty),
+            () => _mode == InteractionMode.Annotate,
+            () => CurrentTool,
+            HandleStaticPinMouseDown,
+            HandleStaticPinMouseMove,
+            HandleStaticPinMouseUp,
+            HandleStaticPinCaptureLost);
         _toolbar = new OverlayToolbarController(
             this,
             () => _disposed,
@@ -213,7 +239,12 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
             () => StateChanged?.Invoke(this, EventArgs.Empty),
             RegisterHotKeys,
             _pinnedLenses.Open,
-            (rect, restoreToolbar) => _ = TakeRegionScreenshotAsync(rect, restoreToolbar),
+            OpenStaticPin,
+            _staticPins.CompleteSelection,
+            ShowToolbar,
+            rect => _capture!.CaptureRegionForQuickEditAsync(rect),
+            image => _capture!.CopyQuickEditImageAsync(image),
+            image => _capture!.SaveQuickEditImageAsync(image),
             ShowRegionMaskContextMenu);
         _capture = new CaptureController(
             () => _disposed,
@@ -296,12 +327,14 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
             (title, text) => _trayIcon?.ShowMessage(title, text),
             ToggleLaserActivationMode,
             ToggleAnnotateMode,
+            ClearAnnotations,
             StartPushToAnnotate,
             ToggleCursorHighlight,
             ToggleClickPulse,
             ToggleSpotlight,
             ToggleMagnifierMode,
             TogglePinnedLens,
+            NewStaticPin,
             ToggleRegionMask,
             ClearRegionMasks,
             ToggleRegionSpotlight,
@@ -485,6 +518,18 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
         }
 
         BeginPinnedLensSelection();
+    }
+
+    public void NewStaticPin()
+    {
+        if (_mode == InteractionMode.StaticPinSelect)
+        {
+            SetInteractionMode(InteractionMode.Passthrough);
+            return;
+        }
+
+        _staticPins.BeginSelection();
+        BeginRectSelectionMode(InteractionMode.StaticPinSelect);
     }
 
     public void ToggleRegionMask()
@@ -720,6 +765,7 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
         await _capture.TakeRegionScreenshotAsync(sourceRect, restoreToolbar);
     }
 
+
     public void SetMagnifierEnabled(bool enabled)
     {
         _settingsCommands.SetMagnifierEnabled(enabled);
@@ -727,7 +773,19 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
 
     public void SetInteractionMode(InteractionMode mode)
     {
+        if (mode == InteractionMode.Annotate && !IsAnnotationMode(_mode))
+        {
+            _settingsCommands.SetAnnotationTool(AnnotationTool.Pencil);
+        }
+
+        if (_mode == InteractionMode.StaticPinSelect && mode != InteractionMode.StaticPinSelect
+            && !_staticPins.ConsumeSelectionCommit())
+        {
+            _staticPins.CancelSelection();
+        }
+
         _modeTransitions.SetMode(mode);
+        _staticPins.RefreshAnnotationCursors();
     }
 
     public void ApplySettings(AppSettings settings)
@@ -808,6 +866,8 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
         _pointerVisuals.RefreshLaserAfterSettingsApplied(previousActivationMode);
         UpdateLiveControlsMouseHook();
 
+        _overlayManager?.RefreshAnnotationCursor();
+        _staticPins.RefreshAnnotationCursors();
         _overlayManager?.Invalidate();
         StateChanged?.Invoke(this, EventArgs.Empty);
     }
@@ -950,6 +1010,7 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
     public void ClearAnnotations()
     {
         _annotations.Clear();
+        _staticPins.ClearInk();
     }
 
     public void DeleteSelectedAnnotations()
@@ -988,11 +1049,238 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
         System.Windows.Application.Current.Shutdown();
     }
 
+    // Pin windows sit above the WPF overlay, so their input enters here directly.
+    // The overlay uses the same route so a gesture may start outside a pin and cross it.
+    private bool HandleStaticPinMouseDown(ScreenPoint point)
+    {
+        if (_mode == InteractionMode.Annotate && CurrentTool == AnnotationTool.Eraser)
+        {
+            _eraserTargetsStaticPins = _staticPins.BeginEraseInkAt(point, Settings.AnnotationThickness);
+            return _eraserTargetsStaticPins && (_overlayManager?.TryCaptureExternalAnnotationGesture(point) ?? false);
+        }
+        if (_mode == InteractionMode.Annotate && StaticPinAnnotationRouter.CanRoute(CurrentTool))
+        {
+            BeginStaticPinAnnotation(point);
+            return _overlayManager?.TryCaptureExternalAnnotationGesture(point) ?? false;
+        }
+
+        return false;
+    }
+
+    private void HandleStaticPinMouseMove(ScreenPoint point)
+    {
+        if (_eraserTargetsStaticPins)
+        {
+            _staticPins.ContinueEraseInkAt(point, Settings.AnnotationThickness);
+            return;
+        }
+        if (_staticPinAnnotationGesture)
+        {
+            ContinueStaticPinAnnotation(point);
+        }
+    }
+
+    private void HandleStaticPinMouseUp(ScreenPoint point)
+    {
+        if (_eraserTargetsStaticPins)
+        {
+            _staticPins.EndEraseInk();
+            _eraserTargetsStaticPins = false;
+            return;
+        }
+        if (_staticPinAnnotationGesture)
+        {
+            EndStaticPinAnnotation(point);
+        }
+    }
+
+    private void HandleStaticPinCaptureLost()
+    {
+        _staticPins.EndEraseInk();
+        _eraserTargetsStaticPins = false;
+        CancelStaticPinAnnotation();
+    }
+
+    private void BeginStaticPinAnnotation(ScreenPoint point)
+    {
+        CancelStaticPinAnnotation();
+        _staticPinAnnotationGesture = true;
+        _staticPinAnnotationTool = CurrentTool;
+        _staticPinLastPoint = point;
+        var pin = _staticPins.FindAt(point);
+        SetStaticPinDrawingTarget(pin);
+        if (CurrentTool == AnnotationTool.Arrow && pin is not null)
+        {
+            if (pin.TryBeginArrowEdit(point))
+            {
+                _staticPinArrowEditPin = pin;
+            }
+            else
+            {
+                _staticPinArrowDraftPin = pin;
+                pin.BeginArrow(point, Settings.AnnotationColor, Settings.AnnotationThickness);
+            }
+        }
+    }
+
+    private void ContinueStaticPinAnnotation(ScreenPoint point, bool isFinalSegment = false)
+    {
+        if (!_staticPinAnnotationGesture) return;
+
+        if (_staticPinArrowEditPin is { } editPin)
+        {
+            editPin.UpdateArrowEdit(point);
+            return;
+        }
+        if (_staticPinArrowDraftPin is { } draftPin)
+        {
+            if (draftPin.Contains(new System.Drawing.Point((int)point.X, (int)point.Y)))
+            {
+                draftPin.UpdateArrow(point);
+                return;
+            }
+            draftPin.CancelArrow();
+            _staticPinArrowDraftPin = null;
+        }
+
+        foreach (var routed in RouteStaticPinSegment(_staticPinLastPoint, point))
+        {
+            if (routed.Pin is not null)
+            {
+                // Crossing into a pin closes the preceding external run. It is one
+                // normal annotation object, rather than one object per mouse sample.
+                CommitStaticPinOutsideDraft();
+                var isArrowEndpoint = isFinalSegment
+                    && _staticPinAnnotationTool == AnnotationTool.Arrow
+                    && SamePoint(routed.Fragment.End, point);
+                // The active border is two pixels wide. Set it before converting
+                // the screen fragment into source coordinates so the live ink and
+                // the displayed content rectangle use the same origin.
+                SetStaticPinDrawingTarget(routed.Pin);
+                routed.Pin.DrawAnnotation(_staticPinAnnotationTool, routed.Fragment.Start, routed.Fragment.End,
+                    Settings.AnnotationColor, Settings.AnnotationThickness, isArrowEndpoint);
+            }
+            else
+            {
+                PreviewStaticPinOutsideFragment(routed.Fragment);
+            }
+        }
+
+        _staticPinLastPoint = point;
+    }
+
+    private void EndStaticPinAnnotation(ScreenPoint point)
+    {
+        if (_staticPinArrowEditPin is { } editPin)
+        {
+            editPin.UpdateArrowEdit(point);
+            editPin.EndArrowEdit();
+            _staticPinArrowEditPin = null;
+            ClearStaticPinAnnotationState();
+            return;
+        }
+        if (_staticPinArrowDraftPin is { } draftPin
+            && draftPin.Contains(new System.Drawing.Point((int)point.X, (int)point.Y)))
+        {
+            draftPin.CommitArrow(point);
+            _staticPinArrowDraftPin = null;
+            ClearStaticPinAnnotationState();
+            return;
+        }
+        ContinueStaticPinAnnotation(point, isFinalSegment: true);
+        CommitStaticPinOutsideDraft(
+            _staticPinAnnotationTool == AnnotationTool.Arrow
+            && _staticPinOutsideDraftActive
+            && SamePoint(_staticPinOutsideDraftEnd, point));
+
+        ClearStaticPinAnnotationState();
+        _overlayManager?.Invalidate();
+    }
+
+    private void CancelStaticPinAnnotation()
+    {
+        if (!_staticPinAnnotationGesture && _staticPinDrawingTargets.Count == 0) return;
+        ClearStaticPinAnnotationState();
+    }
+
+    private void ClearStaticPinAnnotationState()
+    {
+        _staticPinArrowDraftPin?.CancelArrow();
+        _staticPinArrowDraftPin = null;
+        _staticPinArrowEditPin?.EndArrowEdit();
+        _staticPinArrowEditPin = null;
+        if (_staticPinOutsideDraftActive)
+        {
+            _annotations.CancelDraft();
+            _staticPinOutsideDraftActive = false;
+        }
+        foreach (var pin in _staticPinDrawingTargets) pin.SetDrawing(false);
+        _staticPinDrawingTargets.Clear();
+        _staticPinAnnotationGesture = false;
+    }
+
+    private void PreviewStaticPinOutsideFragment(StaticPinStrokeFragment fragment)
+    {
+        if (fragment.Start.DistanceTo(fragment.End) < 0.5) return;
+        if (!_staticPinOutsideDraftActive)
+        {
+            var previewTool = _staticPinAnnotationTool == AnnotationTool.Arrow
+                ? AnnotationTool.Line
+                : _staticPinAnnotationTool;
+            _annotations.BeginStroke(previewTool, fragment.Start, Settings);
+            _staticPinOutsideDraftActive = true;
+        }
+
+        _staticPinOutsideDraftEnd = fragment.End;
+        _annotations.UpdateStroke(fragment.End, shift: false);
+    }
+
+    private void CommitStaticPinOutsideDraft(bool finalArrow = false)
+    {
+        if (!_staticPinOutsideDraftActive) return;
+        if (finalArrow)
+        {
+            _annotations.CommitDraftAs(AnnotationTool.Arrow);
+        }
+        else
+        {
+            _annotations.CommitStroke();
+        }
+
+        _staticPinOutsideDraftActive = false;
+    }
+
+    private void SetStaticPinDrawingTarget(StaticPinWindow? pin)
+    {
+        if (pin is null) return;
+        if (_staticPinDrawingTargets.Add(pin)) pin.SetDrawing(true);
+    }
+
+    private static ScreenRect ToScreenRect(System.Drawing.Rectangle bounds)
+        => new(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom);
+
+    private IEnumerable<(StaticPinStrokeFragment Fragment, StaticPinWindow? Pin)> RouteStaticPinSegment(ScreenPoint start, ScreenPoint end)
+    {
+        var pins = _staticPins.GetPinsTopmostFirst();
+        foreach (var routed in StaticPinAnnotationRouter.RouteAcrossPins(
+            _staticPinAnnotationTool,
+            start,
+            end,
+            pins.Select(pin => ToScreenRect(pin.Bounds)).ToArray()))
+        {
+            yield return (routed.Fragment, routed.PinIndex is { } index ? pins[index] : null);
+        }
+    }
+
+    private static bool SamePoint(ScreenPoint first, ScreenPoint second)
+        => first.DistanceTo(second) < 0.01;
+
     public void HandleOverlayMouseDown(ScreenPoint point, MouseButton button, ModifierKeys modifiers)
     {
         if (IsRectSelectionMode(_mode))
         {
             _rectTools.HandleMouseDown(point, button);
+            _overlayManager?.RefreshAnnotationCursor();
             return;
         }
 
@@ -1001,7 +1289,22 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
             return;
         }
 
+        _eraserTargetsStaticPins = CurrentTool == AnnotationTool.Eraser
+            && _staticPins.BeginEraseInkAt(point, Settings.AnnotationThickness);
+        if (_eraserTargetsStaticPins)
+        {
+            _staticPins.ContinueEraseInkAt(point, Settings.AnnotationThickness);
+            return;
+        }
+
+        if (_mode == InteractionMode.Annotate && StaticPinAnnotationRouter.CanRoute(CurrentTool))
+        {
+            BeginStaticPinAnnotation(point);
+            return;
+        }
+
         _annotationMouse.HandleMouseDown(point);
+        _overlayManager?.RefreshAnnotationCursor();
     }
 
     public void HandleOverlayMouseMove(ScreenPoint point, ModifierKeys modifiers)
@@ -1017,6 +1320,26 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
             return;
         }
 
+        if (_eraserTargetsStaticPins)
+        {
+            _staticPins.ContinueEraseInkAt(point, Settings.AnnotationThickness);
+            return;
+        }
+
+        if (CurrentTool == AnnotationTool.Eraser
+            && _staticPins.BeginEraseInkAt(point, Settings.AnnotationThickness))
+        {
+            _annotationMouse.HandleCaptureLost();
+            _eraserTargetsStaticPins = true;
+            return;
+        }
+
+        if (_staticPinAnnotationGesture)
+        {
+            ContinueStaticPinAnnotation(point);
+            return;
+        }
+
         _annotationMouse.HandleMouseMove(point, modifiers);
     }
 
@@ -1025,6 +1348,7 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
         if (IsRectSelectionMode(_mode))
         {
             _rectTools.HandleMouseUp(point, button);
+            _overlayManager?.RefreshAnnotationCursor();
             return;
         }
 
@@ -1033,7 +1357,21 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
             return;
         }
 
+        if (_eraserTargetsStaticPins)
+        {
+            _staticPins.EndEraseInk();
+            _eraserTargetsStaticPins = false;
+            return;
+        }
+
+        if (_staticPinAnnotationGesture)
+        {
+            EndStaticPinAnnotation(point);
+            return;
+        }
+
         _annotationMouse.HandleMouseUp(point, modifiers);
+        _overlayManager?.RefreshAnnotationCursor();
     }
 
     public bool HandleOverlayMouseWheel(ScreenPoint point, int delta, ModifierKeys modifiers)
@@ -1059,7 +1397,11 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
             return;
         }
 
+        _staticPins.EndEraseInk();
+        _eraserTargetsStaticPins = false;
+        CancelStaticPinAnnotation();
         _annotationMouse.HandleCaptureLost();
+        _overlayManager?.RefreshAnnotationCursor();
     }
 
     public bool HandleOverlayKeyDown(Key key, ModifierKeys modifiers)
@@ -1079,6 +1421,11 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
 
     public void HandleOverlayTextInput(string text)
     {
+        if (_mode == InteractionMode.ScreenshotRegionSelect)
+        {
+            _rectTools.HandleTextInput(text);
+            return;
+        }
         if (IsAnnotationMode(_mode) && _annotations.HasTextInput)
         {
             _annotationInput.HandleTextInput(text);
@@ -1107,6 +1454,7 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
         _hotKeys.Dispose();
         CloseMagnifierHost();
         _captureStage?.Dispose();
+        _staticPins.Dispose();
         _pinnedLenses.Dispose();
         _timerController?.Dispose();
         _trayIcon?.Dispose();
@@ -1497,6 +1845,8 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
         return handles;
     }
 
+    private void OpenStaticPin(ScreenRect rect) => _ = _staticPins.OpenAsync(rect);
+
     private void SubscribeMagnifierRendering()
     {
         _magnifier.SubscribeRendering();
@@ -1536,12 +1886,18 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
         // floating windows a removed/rearranged monitor would otherwise strand
         // off-screen, by clamping them back onto the nearest surviving monitor.
         _pinnedLenses.ReconcileToWorkingArea();
+        _staticPins.ReconcileToWorkingArea();
         _timerController?.ReconcileToWorkingArea();
     }
 
     public void ClosePinnedLenses()
     {
         _pinnedLenses.CloseAll();
+    }
+
+    public void CloseAllStaticPins()
+    {
+        _staticPins.CloseAll();
     }
 
     public bool HasCaptureStages => _captureStage?.HasStages == true;
@@ -1616,6 +1972,7 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
         _timerController?.ReassertTopmost();
 
         _pinnedLenses.ReassertContextMenuTopmost();
+        _staticPins.ReassertTopmost();
         _regionMaskContextMenu.ReassertTopmostIfVisible();
         WpfTopmostToolTipHelper.ReassertOpen();
     }
@@ -1626,6 +1983,8 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
         {
             _pinnedLenses.ReassertTopmost();
         }
+
+        _staticPins.ReassertTopmost();
     }
 
     private ScreenPoint? GetSpotlightPoint()
@@ -1648,6 +2007,7 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
     private static bool IsRectSelectionMode(InteractionMode mode)
     {
         return mode is InteractionMode.PinnedLensSelect
+            or InteractionMode.StaticPinSelect
             or InteractionMode.RegionMaskSelect
             or InteractionMode.ScreenshotRegionSelect
             or InteractionMode.RegionSpotlightSelect;

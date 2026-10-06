@@ -1,6 +1,7 @@
 using System.Windows.Input;
 using FocusTool.Win.Models;
 using FocusTool.Win.Overlay;
+using System.Windows.Media.Imaging;
 using Shortcut = FocusTool.Win.Native.Shortcut;
 
 namespace FocusTool.Win.Services;
@@ -19,8 +20,16 @@ internal sealed class RectToolsInputController
     private readonly Action _notifyStateChanged;
     private readonly Action _registerHotKeys;
     private readonly Action<ScreenRect> _openPinnedLens;
-    private readonly Action<ScreenRect, bool> _takeRegionScreenshot;
+    private readonly Action<ScreenRect> _openStaticPin;
+    private readonly Action _completeStaticPinSelection;
+    private readonly Action _showToolbar;
+    private readonly Func<ScreenRect, Task<BitmapSource?>> _captureQuickEditSource;
+    private readonly Func<BitmapSource, Task> _copyQuickEditImage;
+    private readonly Func<BitmapSource, Task> _saveQuickEditImage;
     private readonly Action<ScreenPoint, int> _showMaskContextMenu;
+    private bool _quickEditDrawing;
+    private bool _quickEditExporting;
+    private Task? _quickEditSourceTask;
 
     public RectToolsInputController(
         RectSelectionController selection,
@@ -33,7 +42,12 @@ internal sealed class RectToolsInputController
         Action notifyStateChanged,
         Action registerHotKeys,
         Action<ScreenRect> openPinnedLens,
-        Action<ScreenRect, bool> takeRegionScreenshot,
+        Action<ScreenRect> openStaticPin,
+        Action completeStaticPinSelection,
+        Action showToolbar,
+        Func<ScreenRect, Task<BitmapSource?>> captureQuickEditSource,
+        Func<BitmapSource, Task> copyQuickEditImage,
+        Func<BitmapSource, Task> saveQuickEditImage,
         Action<ScreenPoint, int> showMaskContextMenu)
     {
         _selection = selection;
@@ -46,7 +60,12 @@ internal sealed class RectToolsInputController
         _notifyStateChanged = notifyStateChanged;
         _registerHotKeys = registerHotKeys;
         _openPinnedLens = openPinnedLens;
-        _takeRegionScreenshot = takeRegionScreenshot;
+        _openStaticPin = openStaticPin;
+        _completeStaticPinSelection = completeStaticPinSelection;
+        _showToolbar = showToolbar;
+        _captureQuickEditSource = captureQuickEditSource;
+        _copyQuickEditImage = copyQuickEditImage;
+        _saveQuickEditImage = saveQuickEditImage;
         _showMaskContextMenu = showMaskContextMenu;
     }
 
@@ -55,6 +74,9 @@ internal sealed class RectToolsInputController
         switch (_modeProvider())
         {
             case InteractionMode.PinnedLensSelect:
+                HandlePinnedLensMouseDown(point, button);
+                break;
+            case InteractionMode.StaticPinSelect:
                 HandlePinnedLensMouseDown(point, button);
                 break;
             case InteractionMode.ScreenshotRegionSelect:
@@ -76,7 +98,40 @@ internal sealed class RectToolsInputController
             case InteractionMode.PinnedLensSelect:
                 InvalidateIf(_selection.UpdateDraft(point));
                 break;
+            case InteractionMode.StaticPinSelect:
+                InvalidateIf(_selection.UpdateDraft(point));
+                break;
             case InteractionMode.ScreenshotRegionSelect:
+                if (QuickEditInkStore.IsResizeDragging)
+                {
+                    QuickEditInkStore.UpdateResizeDrag(point);
+                    _invalidateOverlay();
+                    return;
+                }
+                if (QuickEditInkStore.IsStrokeDragging)
+                {
+                    QuickEditInkStore.UpdateStrokeDrag(point);
+                    _invalidateOverlay();
+                    return;
+                }
+                if (QuickEditInkStore.IsCalloutPointerDragging)
+                {
+                    QuickEditInkStore.UpdateCalloutPointerDrag(point);
+                    _invalidateOverlay();
+                    return;
+                }
+                if (QuickEditInkStore.IsArrowControlDragging)
+                {
+                    QuickEditInkStore.UpdateArrowControlDrag(point);
+                    _invalidateOverlay();
+                    return;
+                }
+                if (_quickEditDrawing)
+                {
+                    QuickEditInkStore.Add(point);
+                    _invalidateOverlay();
+                    return;
+                }
                 if (_selection.UpdateScreenshotEdit(point))
                 {
                     _invalidateOverlay();
@@ -113,6 +168,9 @@ internal sealed class RectToolsInputController
             case InteractionMode.PinnedLensSelect:
                 HandlePinnedLensMouseUp(point, button);
                 break;
+            case InteractionMode.StaticPinSelect:
+                HandleStaticPinMouseUp(point, button);
+                break;
             case InteractionMode.ScreenshotRegionSelect:
                 HandleScreenshotRegionMouseUp(point, button);
                 break;
@@ -137,7 +195,15 @@ internal sealed class RectToolsInputController
             case InteractionMode.PinnedLensSelect:
                 _setMode(InteractionMode.Passthrough);
                 break;
+            case InteractionMode.StaticPinSelect:
+                _selection.CancelDraft();
+                _setMode(InteractionMode.Passthrough);
+                break;
             case InteractionMode.ScreenshotRegionSelect:
+                QuickEditInkStore.EndCalloutPointerDrag();
+                QuickEditInkStore.EndArrowControlDrag();
+                QuickEditInkStore.EndStrokeDrag();
+                QuickEditInkStore.EndResizeDrag();
                 _selection.CancelScreenshotPointerState();
                 _invalidateOverlay();
                 break;
@@ -170,6 +236,27 @@ internal sealed class RectToolsInputController
     public bool HandleKeyDown(Key key, ModifierKeys modifiers)
     {
         var mode = _modeProvider();
+        if (mode == InteractionMode.ScreenshotRegionSelect && QuickEditInkStore.ActiveText is not null)
+        {
+            if (key == Key.Escape)
+            {
+                QuickEditInkStore.CancelText();
+                _invalidateOverlay();
+                return true;
+            }
+            if (key == Key.Back)
+            {
+                QuickEditInkStore.BackspaceText();
+                _invalidateOverlay();
+                return true;
+            }
+            if (key == Key.Enter)
+            {
+                QuickEditInkStore.AppendText("\n");
+                _invalidateOverlay();
+                return true;
+            }
+        }
         if (Matches(key, modifiers, ExitVisualShortcut)
             || Matches(key, modifiers, _settingsProvider().Shortcuts.ExitAnnotate))
         {
@@ -190,15 +277,35 @@ internal sealed class RectToolsInputController
 
         if (mode == InteractionMode.ScreenshotRegionSelect)
         {
-            if ((key == Key.Back || key == Key.Delete) && modifiers == ModifierKeys.None)
+            if (key == Key.F2 && modifiers == ModifierKeys.None && QuickEditInkStore.BeginEditingSelectedText())
             {
-                DeletePendingScreenshotRegion();
+                _invalidateOverlay();
                 return true;
             }
-
-            if (key == Key.Enter && modifiers == ModifierKeys.None)
+            if (key == Key.Z && modifiers == ModifierKeys.Control)
             {
-                CommitPendingScreenshotRegion();
+                if (QuickEditInkStore.Undo()) _invalidateOverlay();
+                return true;
+            }
+            if ((key == Key.Y && modifiers == ModifierKeys.Control)
+                || (key == Key.Z && modifiers == (ModifierKeys.Control | ModifierKeys.Shift)))
+            {
+                if (QuickEditInkStore.Redo()) _invalidateOverlay();
+                return true;
+            }
+            if (key == Key.C && modifiers == ModifierKeys.Control)
+            {
+                _ = CommitPendingScreenshotRegionAsync(save: false);
+                return true;
+            }
+            if ((key == Key.Back || key == Key.Delete) && modifiers == ModifierKeys.None)
+            {
+                if (QuickEditInkStore.DeleteSelected())
+                {
+                    _invalidateOverlay();
+                    return true;
+                }
+                DeletePendingScreenshotRegion();
                 return true;
             }
 
@@ -225,6 +332,13 @@ internal sealed class RectToolsInputController
         return false;
     }
 
+    public void HandleTextInput(string text)
+    {
+        if (_modeProvider() != InteractionMode.ScreenshotRegionSelect || QuickEditInkStore.ActiveText is null) return;
+        QuickEditInkStore.AppendText(text);
+        _invalidateOverlay();
+    }
+
     private void HandlePinnedLensMouseDown(ScreenPoint point, MouseButton button)
     {
         if (button != MouseButton.Left)
@@ -240,6 +354,76 @@ internal sealed class RectToolsInputController
     {
         if (button != MouseButton.Left)
         {
+            return;
+        }
+
+        if (QuickEditInkStore.ActiveText is not null)
+        {
+            QuickEditInkStore.CommitText();
+            _invalidateOverlay();
+            if (_selection.PendingScreenshotRegion is not { } textFrame
+                || !QuickEditPalette.TryHit(textFrame, point, out _)) return;
+        }
+
+        if (_selection.PendingScreenshotRegion is { } frame
+            && QuickEditPalette.TryHit(frame, point, out var action))
+        {
+            if (action is QuickEditPaletteAction.Copy or QuickEditPaletteAction.Save)
+            {
+                _ = CommitPendingScreenshotRegionAsync(save: action == QuickEditPaletteAction.Save);
+            }
+            else if (action == QuickEditPaletteAction.Cancel)
+            {
+                DeletePendingScreenshotRegion();
+                _setMode(InteractionMode.Passthrough);
+            }
+            else
+            {
+                QuickEditInkStore.Tool = QuickEditPalette.ToTool(action);
+                _invalidateOverlay();
+            }
+
+            return;
+        }
+
+        if (_selection.PendingScreenshotRegion is not null && QuickEditInkStore.TryBeginCalloutPointerDrag(point))
+        {
+            _invalidateOverlay();
+            return;
+        }
+
+        if (_selection.PendingScreenshotRegion is { } selected && selected.Contains(point))
+        {
+            if (QuickEditInkStore.TryBeginResizeDrag(point))
+            {
+                _invalidateOverlay();
+                return;
+            }
+            if (QuickEditInkStore.TryBeginArrowControlDrag(point))
+            {
+                _invalidateOverlay();
+                return;
+            }
+            if (QuickEditInkStore.TryBeginStrokeDrag(point))
+            {
+                _invalidateOverlay();
+                return;
+            }
+            if (QuickEditInkStore.Tool == QuickEditTool.Text)
+            {
+                QuickEditInkStore.BeginText(point);
+                _invalidateOverlay();
+                return;
+            }
+            if (QuickEditInkStore.Tool == QuickEditTool.StepBadge)
+            {
+                QuickEditInkStore.PlaceStepBadge(point);
+                _invalidateOverlay();
+                return;
+            }
+
+            QuickEditInkStore.Begin(point);
+            _quickEditDrawing = true;
             return;
         }
 
@@ -342,6 +526,28 @@ internal sealed class RectToolsInputController
         }
     }
 
+    private void HandleStaticPinMouseUp(ScreenPoint point, MouseButton button)
+    {
+        if (button != MouseButton.Left)
+        {
+            return;
+        }
+
+        var sourceRect = _selection.CompleteDraft(point);
+        if (sourceRect is null)
+        {
+            return;
+        }
+
+        var completedSourceRect = sourceRect.Value;
+        _setMode(InteractionMode.Passthrough);
+        if (RectGeometry.IsLargeEnough(completedSourceRect))
+        {
+            _completeStaticPinSelection();
+            _openStaticPin(completedSourceRect);
+        }
+    }
+
     private void HandleScreenshotRegionMouseUp(ScreenPoint point, MouseButton button)
     {
         if (button != MouseButton.Left)
@@ -349,9 +555,51 @@ internal sealed class RectToolsInputController
             return;
         }
 
+        if (QuickEditInkStore.IsResizeDragging)
+        {
+            QuickEditInkStore.UpdateResizeDrag(point);
+            QuickEditInkStore.EndResizeDrag();
+            _invalidateOverlay();
+            return;
+        }
+
+        if (QuickEditInkStore.IsStrokeDragging)
+        {
+            QuickEditInkStore.UpdateStrokeDrag(point);
+            QuickEditInkStore.EndStrokeDrag();
+            _invalidateOverlay();
+            return;
+        }
+
+        if (QuickEditInkStore.IsCalloutPointerDragging)
+        {
+            QuickEditInkStore.UpdateCalloutPointerDrag(point);
+            QuickEditInkStore.EndCalloutPointerDrag();
+            _invalidateOverlay();
+            return;
+        }
+
+        if (QuickEditInkStore.IsArrowControlDragging)
+        {
+            QuickEditInkStore.UpdateArrowControlDrag(point);
+            QuickEditInkStore.EndArrowControlDrag();
+            _invalidateOverlay();
+            return;
+        }
+
+        if (_quickEditDrawing)
+        {
+            QuickEditInkStore.Add(point);
+            QuickEditInkStore.Commit();
+            _quickEditDrawing = false;
+            _invalidateOverlay();
+            return;
+        }
+
         if (_selection.IsScreenshotRegionResizing)
         {
             _selection.EndScreenshotPointerAction();
+            if (_selection.PendingScreenshotRegion is { } resized) _quickEditSourceTask = RefreshQuickEditSourceAsync(resized);
             _invalidateOverlay();
             return;
         }
@@ -359,6 +607,7 @@ internal sealed class RectToolsInputController
         if (_selection.IsScreenshotRegionMoving)
         {
             _selection.EndScreenshotPointerAction();
+            if (_selection.PendingScreenshotRegion is { } moved) _quickEditSourceTask = RefreshQuickEditSourceAsync(moved);
             _invalidateOverlay();
             return;
         }
@@ -374,9 +623,21 @@ internal sealed class RectToolsInputController
         {
             _selection.SetPendingScreenshotRegion(completedSourceRect);
             _notifyStateChanged();
+            _quickEditSourceTask = RefreshQuickEditSourceAsync(completedSourceRect);
         }
 
         _invalidateOverlay();
+    }
+
+    private async Task RefreshQuickEditSourceAsync(ScreenRect frame)
+    {
+        var source = await _captureQuickEditSource(frame);
+        if (source is not null && _selection.PendingScreenshotRegion == frame
+            && _modeProvider() == InteractionMode.ScreenshotRegionSelect)
+        {
+            QuickEditInkStore.SetSource(frame, source);
+            _invalidateOverlay();
+        }
     }
 
     private void HandleRegionSpotlightMouseUp(ScreenPoint point, MouseButton button)
@@ -501,15 +762,43 @@ internal sealed class RectToolsInputController
         _notifyStateChanged();
     }
 
-    private void CommitPendingScreenshotRegion()
+    private async Task CommitPendingScreenshotRegionAsync(bool save)
     {
-        if (!_selection.TryTakePendingScreenshotRegion(out var rect, out var restoreToolbar))
+        if (_quickEditExporting || _selection.PendingScreenshotRegion is not { } selected) return;
+        _quickEditExporting = true;
+        var restoreToolbarAfterExport = false;
+        try
         {
-            return;
-        }
+            if (_quickEditSourceTask is not null) await _quickEditSourceTask;
+            QuickEditInkStore.CommitText();
+            var source = QuickEditInkStore.SourceFrame == selected ? QuickEditInkStore.Source : null;
+            var pixelated = QuickEditInkStore.PixelatedSource;
+            var strokes = QuickEditInkStore.Strokes.ToArray();
+            if (source is null)
+            {
+                source = await _captureQuickEditSource(selected);
+                if (source is null) return;
+                QuickEditInkStore.SetSource(selected, source);
+                pixelated = QuickEditInkStore.PixelatedSource;
+            }
 
-        _setMode(InteractionMode.Passthrough);
-        _takeRegionScreenshot(rect, restoreToolbar);
+            if (_selection.PendingScreenshotRegion != selected
+                || !_selection.TryTakePendingScreenshotRegion(out var rect, out var restoreToolbar)) return;
+            restoreToolbarAfterExport = restoreToolbar;
+            _setMode(InteractionMode.Passthrough);
+            var image = QuickEditImageComposer.Compose(source, rect, strokes, pixelated);
+            if (save) await _saveQuickEditImage(image);
+            else await _copyQuickEditImage(image);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Could not export Quick Edit image.", ex);
+        }
+        finally
+        {
+            if (restoreToolbarAfterExport) _showToolbar();
+            _quickEditExporting = false;
+        }
     }
 
     private bool TryNudgeScreenshotRegion(Key key, ModifierKeys modifiers)
@@ -578,4 +867,5 @@ internal sealed class RectToolsInputController
     {
         return Shortcut.TryParse(shortcutText, out var shortcut) && shortcut.Matches(key, modifiers);
     }
+
 }

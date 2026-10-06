@@ -81,6 +81,7 @@ internal sealed class ToolbarLayoutBuilder
         _controls.HighlightButton = AddSplitButton(primary, "Cursor", "Switch cursor highlight between Always and Hold", 48, (_, _) => _controller.ToggleCursorHighlight(), "highlight");
         _controls.SpotButton = AddSplitButton(primary, "Spot", "Toggle spotlight", 39, (_, _) => _controller.ToggleSpotlight(), "spot");
         _controls.ZoomButton = AddSplitButton(primary, "Zoom", "Toggle zoom", 43, (_, _) => _controller.ToggleMagnifierMode(), "zoom");
+        primary.Children.Add(CreateSplitMenu("Pin", "New static pin", 36, (_, _) => _controller.NewStaticPin(), "pin"));
         primary.Children.Add(ToolbarStyles.CreateSeparator());
         _controls.DrawButton = AddSplitButton(primary, "Draw", "Toggle annotation mode", 42, (_, _) => _callbacks.ToggleMode(InteractionMode.Annotate), "draw");
         primary.Children.Add(ToolbarStyles.CreateSeparator());
@@ -108,6 +109,39 @@ internal sealed class ToolbarLayoutBuilder
         stack.Children.Add(_controls.ContextualHost);
         panel.Child = stack;
         return panel;
+    }
+
+    private UIElement CreateSplitMenu(string label, string tooltip, double width, RoutedEventHandler onNew, string rowKey)
+    {
+        var container = new StackPanel { Orientation = WpfOrientation.Vertical, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(1, 0, 1, 0) };
+        var main = ToolbarStyles.CreateButton(label, tooltip, onNew, width);
+        main.Margin = new Thickness(0);
+        main.Height = 24;
+        _controls.StaticPinButton = main;
+        container.Children.Add(main);
+        var caret = new WpfButton
+        {
+            Content = "˅", Width = width, Height = 12, Padding = new Thickness(0), Margin = new Thickness(0, 1, 0, 0),
+            Background = WpfBrushes.Transparent, BorderThickness = new Thickness(0), Foreground = ToolbarStyles.CaretBrush,
+            Cursor = WpfCursors.Hand, FontSize = 9, HorizontalContentAlignment = WpfHorizontalAlignment.Center, VerticalContentAlignment = VerticalAlignment.Center
+        };
+        ToolbarStyles.SetToolTip(caret, "Pin actions");
+        var menu = new System.Windows.Controls.ContextMenu
+        {
+            PlacementTarget = caret,
+            Placement = System.Windows.Controls.Primitives.PlacementMode.Bottom
+        };
+        var newPin = new System.Windows.Controls.MenuItem { Header = "New Pin" };
+        newPin.Click += onNew;
+        var closeAll = new System.Windows.Controls.MenuItem { Header = "Close all Pins" };
+        closeAll.Click += (_, _) => _controller.CloseAllStaticPins();
+        menu.Items.Add(newPin);
+        menu.Items.Add(closeAll);
+        WpfTopmostContextMenuHelper.Attach(menu);
+        caret.Click += (_, _) => menu.IsOpen = true;
+        container.Children.Add(caret);
+        _controls.Carets[rowKey] = caret;
+        return container;
     }
 
     private void BuildContextualRows()
@@ -316,7 +350,7 @@ internal sealed class ToolbarLayoutBuilder
     {
         var row = ToolbarStyles.CreateRow();
         row.Children.Add(ToolbarStyles.CreateButton("Monitor", "Screenshot current monitor", (_, _) => _controller.TakeScreenshot(), width: 58));
-        _controls.ShotRegionButton = ToolbarStyles.CreateButton("Region", "Region screenshot", (_, _) => _controller.TakeRegionScreenshot(), width: 52);
+        _controls.ShotRegionButton = ToolbarStyles.CreateButton("Quick edit", "Capture and mark up a selected region", (_, _) => _controller.TakeRegionScreenshot(), width: 74);
         row.Children.Add(_controls.ShotRegionButton);
         return row;
     }

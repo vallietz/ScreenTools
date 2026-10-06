@@ -160,6 +160,65 @@ internal sealed class CaptureController
         }
     }
 
+    /// <summary>
+    /// Captures pixels for the temporary quick editor without saving or changing
+    /// the clipboard. The overlay is excluded so the selection frame is never
+    /// baked into the snapshot.
+    /// </summary>
+    public async Task<BitmapSource?> CaptureRegionForQuickEditAsync(ScreenRect sourceRect)
+    {
+        if (_isDisposed() || IsCaptureInProgress)
+        {
+            return null;
+        }
+
+        IsCaptureInProgress = true;
+        var toolbarWasVisible = _isToolbarVisible();
+        using var overlayCaptureExclusion = _excludeOverlayFromCapture();
+        if (overlayCaptureExclusion is null)
+        {
+            IsCaptureInProgress = false;
+            _showMessage("Quick edit cancelled", "The live overlay could not be excluded from capture.");
+            return null;
+        }
+
+        var magnifierWasActive = _isMagnifierEnabled();
+        if (toolbarWasVisible)
+        {
+            _hideToolbar();
+        }
+        _closeMagnifierHost();
+        await WaitForScreenRefreshAsync();
+
+        try
+        {
+            return await _screenshotService.CaptureRegionImageAsync(sourceRect, copyToClipboard: false);
+        }
+        catch (Exception ex)
+        {
+            AppLog.Error("Could not capture screenshot for quick edit.", ex);
+            _showMessage("Quick edit failed", ex.Message);
+            return null;
+        }
+        finally
+        {
+            IsCaptureInProgress = false;
+            if (toolbarWasVisible && !_isDisposed())
+            {
+                _showToolbar();
+            }
+            if (magnifierWasActive && !_isDisposed())
+            {
+                _updateMagnifierHost();
+            }
+        }
+    }
+
+    public Task CopyQuickEditImageAsync(BitmapSource image) => _screenshotService.CopyImageAsync(image);
+
+    public Task SaveQuickEditImageAsync(BitmapSource image) =>
+        _screenshotService.SaveImageAsync(image, copyToClipboard: false, fileNamePrefix: "FocusTool_QuickEdit");
+
     public async Task EnterScreenBoardAsync(
         Action<ScreenBoardFrame> enterScreenBoard,
         Action restorePreviousMode)

@@ -6,6 +6,9 @@ namespace FocusTool.Win.Overlay;
 internal interface IOverlayInputHandler
 {
     InteractionMode Mode { get; }
+    AnnotationTool CurrentTool { get; }
+    bool IsMoveDragging { get; }
+    bool HasMoveSelection { get; }
     void HandleOverlayMouseDown(ScreenPoint point, MouseButton button, ModifierKeys modifiers);
     void HandleOverlayMouseMove(ScreenPoint point, ModifierKeys modifiers);
     void HandleOverlayMouseUp(ScreenPoint point, MouseButton button, ModifierKeys modifiers);

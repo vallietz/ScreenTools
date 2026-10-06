@@ -128,6 +128,16 @@ internal sealed class OverlayManager : IDisposable
         }
     }
 
+    public void RefreshAnnotationCursor()
+    {
+        foreach (var window in _windows) window.RefreshAnnotationCursor();
+    }
+
+    /// <summary>Routes subsequent move/up messages to the overlay after a Pin started the gesture.</summary>
+    public bool TryCaptureExternalAnnotationGesture(ScreenPoint point)
+        => _visible
+           && _windows.FirstOrDefault(window => window.Contains(point))?.TryCaptureExternalAnnotationGesture() == true;
+
     // Repaint only the monitor(s) whose content actually changes as the cursor moves
     // (spotlight hole / magnifier ring). Other monitors keep an identical cached
     // frame, so on a multi-monitor setup idle surfaces are not repainted every move.
@@ -177,6 +187,7 @@ internal sealed class OverlayManager : IDisposable
     {
         return mode is InteractionMode.Annotate
             or InteractionMode.PinnedLensSelect
+            or InteractionMode.StaticPinSelect
             or InteractionMode.RegionMaskSelect
             or InteractionMode.ScreenshotRegionSelect
             or InteractionMode.RegionSpotlightSelect

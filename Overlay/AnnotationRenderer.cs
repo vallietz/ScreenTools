@@ -127,7 +127,7 @@ internal sealed class AnnotationRenderer
         switch (shape.Tool)
         {
             case AnnotationTool.Arrow:
-                DrawArrow(drawingContext, _toLocal(shape.Start), _toLocal(shape.End), color, shape.Thickness, opacity);
+                DrawArrow(drawingContext, shape, color, shape.Thickness, opacity);
                 break;
             case AnnotationTool.Rectangle:
                 drawingContext.DrawRectangle(null, haloPen, _toRect(shape.Start, shape.End));
@@ -243,6 +243,12 @@ internal sealed class AnnotationRenderer
         {
             DrawPointHandle(drawingContext, _toLocal(shape.Start));
             DrawPointHandle(drawingContext, _toLocal(shape.End));
+            if (shape.Tool == AnnotationTool.Arrow)
+            {
+                var (first, second) = shape.GetArrowControls();
+                DrawPointHandle(drawingContext, _toLocal(first));
+                DrawPointHandle(drawingContext, _toLocal(second));
+            }
         }
     }
 
@@ -402,10 +408,16 @@ internal sealed class AnnotationRenderer
         return geometry;
     }
 
-    private void DrawArrow(DrawingContext drawingContext, WpfPoint start, WpfPoint end, MediaColor color, double thickness, double opacity)
+    private void DrawArrow(DrawingContext drawingContext, AnnotationShape shape, MediaColor color, double thickness, double opacity)
     {
-        var vector = start - end;
-        if (vector.Length < 4)
+        var start = _toLocal(shape.Start);
+        var end = _toLocal(shape.End);
+        var (firstControl, secondControl) = shape.GetArrowControls();
+        var first = _toLocal(firstControl);
+        var second = _toLocal(secondControl);
+        var vector = second - end;
+        if (vector.Length < 0.01) vector = start - end;
+        if ((start - end).Length < 4 || vector.Length < 0.01)
         {
             DrawLine(drawingContext, start, end, color, opacity, thickness);
             return;
@@ -415,11 +427,17 @@ internal sealed class AnnotationRenderer
         var normal = new Vector(-vector.Y, vector.X);
         var headLength = Math.Max(12, thickness * 4.5);
         var headWidth = Math.Max(7, thickness * 2.8);
-        var shaftEnd = end + vector * Math.Max(1, headLength * 0.72);
         var point1 = end + vector * headLength + normal * headWidth;
         var point2 = end + vector * headLength - normal * headWidth;
 
-        drawingContext.DrawLine(_createPen(color, opacity, thickness), start, shaftEnd);
+        var shaft = new StreamGeometry();
+        using (var context = shaft.Open())
+        {
+            context.BeginFigure(start, isFilled: false, isClosed: false);
+            context.BezierTo(first, second, end, isStroked: true, isSmoothJoin: true);
+        }
+        shaft.Freeze();
+        drawingContext.DrawGeometry(null, _createPen(color, opacity, thickness), shaft);
 
         var geometry = new StreamGeometry();
         using (var context = geometry.Open())

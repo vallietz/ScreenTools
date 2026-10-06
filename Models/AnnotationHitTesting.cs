@@ -115,6 +115,20 @@ internal static class AnnotationHitTesting
                 handle = AnnotationEditHandle.End;
                 return true;
             }
+            if (shape.Tool == AnnotationTool.Arrow)
+            {
+                var (first, second) = shape.GetArrowControls();
+                if (DistanceSquared(point, first) <= hitRadiusSquared)
+                {
+                    handle = AnnotationEditHandle.Control1;
+                    return true;
+                }
+                if (DistanceSquared(point, second) <= hitRadiusSquared)
+                {
+                    handle = AnnotationEditHandle.Control2;
+                    return true;
+                }
+            }
         }
         else if (shape.Tool is AnnotationTool.Rectangle or AnnotationTool.Ellipse or AnnotationTool.StepRect or AnnotationTool.Image)
         {

@@ -612,18 +612,21 @@
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
                                             <RowDefinition Height="Auto" />
+                                            <RowDefinition Height="Auto" />
                                         </Grid.RowDefinitions>
 
-                                        <TextBlock Grid.Row="0" Text="Current monitor" VerticalAlignment="Center" Margin="0,2" />
-                                        <TextBox Grid.Row="0" Grid.Column="1" x:Name="TakeScreenshotBox" Margin="8,1,0,1" />
-                                        <TextBlock Grid.Row="1" Text="Region screenshot" VerticalAlignment="Center" Margin="0,2" />
-                                        <TextBox Grid.Row="1" Grid.Column="1" x:Name="TakeRegionScreenshotBox" Margin="8,1,0,1" />
-                                        <TextBlock Grid.Row="2" Text="Toggle screen board" VerticalAlignment="Center" Margin="0,2" />
-                                        <TextBox Grid.Row="2" Grid.Column="1" x:Name="ToggleScreenBoardBox" Margin="8,1,0,1" />
-                                        <TextBlock Grid.Row="3" Text="Toggle black board" VerticalAlignment="Center" Margin="0,2" />
-                                        <TextBox Grid.Row="3" Grid.Column="1" x:Name="ToggleBlackScreenBox" Margin="8,1,0,1" />
-                                        <TextBlock Grid.Row="4" Text="Toggle white board" VerticalAlignment="Center" Margin="0,2" />
-                                        <TextBox Grid.Row="4" Grid.Column="1" x:Name="ToggleWhiteScreenBox" Margin="8,1,0,1" />
+                                        <TextBlock Grid.Row="0" Text="New static pin" VerticalAlignment="Center" Margin="0,2" />
+                                        <TextBox Grid.Row="0" Grid.Column="1" x:Name="NewStaticPinBox" Margin="8,1,0,1" />
+                                        <TextBlock Grid.Row="1" Text="Current monitor" VerticalAlignment="Center" Margin="0,2" />
+                                        <TextBox Grid.Row="1" Grid.Column="1" x:Name="TakeScreenshotBox" Margin="8,1,0,1" />
+                                        <TextBlock Grid.Row="2" Text="Region screenshot" VerticalAlignment="Center" Margin="0,2" />
+                                        <TextBox Grid.Row="2" Grid.Column="1" x:Name="TakeRegionScreenshotBox" Margin="8,1,0,1" />
+                                        <TextBlock Grid.Row="3" Text="Toggle screen board" VerticalAlignment="Center" Margin="0,2" />
+                                        <TextBox Grid.Row="3" Grid.Column="1" x:Name="ToggleScreenBoardBox" Margin="8,1,0,1" />
+                                        <TextBlock Grid.Row="4" Text="Toggle black board" VerticalAlignment="Center" Margin="0,2" />
+                                        <TextBox Grid.Row="4" Grid.Column="1" x:Name="ToggleBlackScreenBox" Margin="8,1,0,1" />
+                                        <TextBlock Grid.Row="5" Text="Toggle white board" VerticalAlignment="Center" Margin="0,2" />
+                                        <TextBox Grid.Row="5" Grid.Column="1" x:Name="ToggleWhiteScreenBox" Margin="8,1,0,1" />
                                     </Grid>
                                 </GroupBox>
                             </StackPanel>

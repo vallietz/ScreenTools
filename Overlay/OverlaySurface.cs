@@ -2,11 +2,17 @@
 using System.Windows;
 using System.Windows.Media;
 using FocusTool.Win.Models;
+using FocusTool.Win.Services;
 using MediaColor = System.Windows.Media.Color;
 using WpfPen = System.Windows.Media.Pen;
 using WpfPoint = System.Windows.Point;
 
 namespace FocusTool.Win.Overlay;
+
+internal readonly record struct QuickEditRenderOptions(
+    bool DrawOuterDim,
+    bool ShowPaletteAndInk,
+    bool ShowSelectionFill);
 
 internal sealed class OverlaySurface : FrameworkElement
 {
@@ -211,6 +217,7 @@ internal sealed class OverlaySurface : FrameworkElement
 
         if (mode is InteractionMode.Annotate
             or InteractionMode.PinnedLensSelect
+            or InteractionMode.StaticPinSelect
             or InteractionMode.RegionMaskSelect
             or InteractionMode.ScreenshotRegionSelect
             or InteractionMode.RegionSpotlightSelect)
@@ -245,6 +252,7 @@ internal sealed class OverlaySurface : FrameworkElement
         }
 
         if (mode is InteractionMode.PinnedLensSelect
+            or InteractionMode.StaticPinSelect
             or InteractionMode.RegionMaskSelect
             or InteractionMode.ScreenshotRegionSelect
             or InteractionMode.RegionSpotlightSelect)
@@ -341,12 +349,231 @@ internal sealed class OverlaySurface : FrameworkElement
             return;
         }
 
+        var quickEditOptions = GetQuickEditRenderOptions(_modeProvider(), visual);
+        if (quickEditOptions.DrawOuterDim)
+        {
+            // This is deliberately drawn by the existing per-monitor overlay,
+            // not a child Window: the desktop remains in place behind the hole.
+            var selected = ToRect(visual.Rect);
+            if (QuickEditInkStore.Source is { } source && QuickEditInkStore.SourceFrame == visual.Rect)
+            {
+                drawingContext.DrawImage(source, selected);
+            }
+            DrawQuickEditDim(drawingContext, selected);
+            if (quickEditOptions.ShowPaletteAndInk)
+            {
+                DrawQuickEditPalette(drawingContext, visual.Rect);
+                DrawQuickEditInk(drawingContext, selected);
+            }
+        }
+
         _rectSelectionRenderer.Draw(
             drawingContext,
             visual,
             _screenBounds,
             ActualWidth,
-            ActualHeight);
+            ActualHeight,
+            quickEditOptions.ShowSelectionFill);
+    }
+
+    internal static QuickEditRenderOptions GetQuickEditRenderOptions(InteractionMode mode, RectOverlayVisual visual)
+    {
+        return mode == InteractionMode.ScreenshotRegionSelect
+            ? new QuickEditRenderOptions(DrawOuterDim: true, ShowPaletteAndInk: !visual.IsDraft, ShowSelectionFill: false)
+            : new QuickEditRenderOptions(DrawOuterDim: false, ShowPaletteAndInk: false, ShowSelectionFill: true);
+    }
+
+    private void DrawQuickEditDim(DrawingContext drawingContext, Rect selected)
+    {
+        var dim = GetBrush(Colors.Black, 0.48);
+        drawingContext.DrawRectangle(dim, null, new Rect(0, 0, ActualWidth, Math.Max(0, selected.Top)));
+        drawingContext.DrawRectangle(dim, null, new Rect(0, selected.Bottom, ActualWidth, Math.Max(0, ActualHeight - selected.Bottom)));
+        drawingContext.DrawRectangle(dim, null, new Rect(0, selected.Top, Math.Max(0, selected.Left), Math.Max(0, selected.Height)));
+        drawingContext.DrawRectangle(dim, null, new Rect(selected.Right, selected.Top, Math.Max(0, ActualWidth - selected.Right), Math.Max(0, selected.Height)));
+    }
+
+    private void DrawQuickEditInk(DrawingContext drawingContext, Rect selected)
+    {
+        drawingContext.PushClip(new RectangleGeometry(selected));
+        foreach (var stroke in QuickEditInkStore.Strokes
+            .Append(QuickEditInkStore.Draft)
+            .Append(QuickEditInkStore.Strokes.Contains(QuickEditInkStore.ActiveText!) ? null : QuickEditInkStore.ActiveText)
+            .Where(stroke => stroke is not null))
+        {
+            var points = stroke!.Points;
+            if (points.Count == 0) continue;
+            if (stroke.Tool == QuickEditTool.StepBadge)
+            {
+                QuickEditStepBadgeRenderer.Draw(drawingContext, ToLocal(points[0]),
+                    QuickEditInkStore.StepNumber(QuickEditInkStore.Strokes, stroke));
+                continue;
+            }
+            if (stroke.Tool == QuickEditTool.Text)
+            {
+                if (!string.IsNullOrWhiteSpace(stroke.Text) || ReferenceEquals(stroke, QuickEditInkStore.ActiveText))
+                {
+                    var editing = ReferenceEquals(stroke, QuickEditInkStore.ActiveText);
+                    var text = GetFormattedText((stroke.Text ?? string.Empty) + (editing ? "|" : string.Empty), Colors.Black, 1, 18, 22);
+                    var origin = ToLocal(points[0]);
+                    var handle = ToLocal(stroke.CalloutHandle);
+                    var box = new Rect(origin, new System.Windows.Size(handle.X - origin.X + handle.X - origin.X, handle.Y - origin.Y));
+                    if (stroke.CalloutTarget is { } target)
+                    {
+                        var tip = ToLocal(target);
+                        drawingContext.DrawLine(CreatePen(Colors.Red, 1, 2), handle, tip);
+                        var direction = tip - handle;
+                        if (direction.Length >= 0.01)
+                        {
+                            direction.Normalize();
+                            var back = tip - direction * 11;
+                            var wing = new Vector(-direction.Y, direction.X) * 5;
+                            drawingContext.DrawLine(CreatePen(Colors.Red, 1, 2), tip, back + wing);
+                            drawingContext.DrawLine(CreatePen(Colors.Red, 1, 2), tip, back - wing);
+                        }
+                    }
+                    drawingContext.DrawRectangle(GetBrush(Colors.LightYellow, 0.94), CreatePen(Colors.Red, 0.85, 1), box);
+                    drawingContext.DrawText(text, new WpfPoint(origin.X + 8, origin.Y + 6));
+                    if (editing || ReferenceEquals(stroke, QuickEditInkStore.SelectedCallout))
+                    {
+                        var pointer = stroke.CalloutTarget is { } targetPoint ? ToLocal(targetPoint) : handle;
+                        drawingContext.DrawEllipse(GetBrush(Colors.White, 0.95), CreatePen(Colors.Red, 1, 1), pointer, 5, 5);
+                    }
+                }
+                continue;
+            }
+            if (points.Count < 2) continue;
+
+            if (stroke.Tool == QuickEditTool.Mosaic)
+            {
+                var first = ToLocal(points[0]);
+                var last = ToLocal(points[^1]);
+                var area = new Rect(first, last);
+                if (QuickEditInkStore.PixelatedSource is { } pixelated)
+                {
+                    drawingContext.PushClip(new RectangleGeometry(area));
+                    drawingContext.DrawImage(pixelated, selected);
+                    drawingContext.Pop();
+                }
+                continue;
+            }
+
+            if (stroke.Tool is QuickEditTool.Rectangle or QuickEditTool.Ellipse)
+            {
+                var first = ToLocal(points[0]);
+                var last = ToLocal(points[^1]);
+                var area = new Rect(first, last);
+                var pen = CreatePen(Colors.Red, 1, 3);
+                if (stroke.Tool == QuickEditTool.Rectangle)
+                    drawingContext.DrawRectangle(null, pen, area);
+                else
+                    drawingContext.DrawEllipse(null, pen,
+                        new WpfPoint(area.Left + area.Width / 2, area.Top + area.Height / 2),
+                        area.Width / 2, area.Height / 2);
+                continue;
+            }
+
+            if (stroke.Tool == QuickEditTool.Arrow)
+            {
+                var first = ToLocal(points[0]);
+                var last = ToLocal(points[^1]);
+                var (control1, control2) = stroke.GetArrowControls();
+                var curve = new StreamGeometry();
+                using (var context = curve.Open())
+                {
+                    context.BeginFigure(first, false, false);
+                    context.BezierTo(ToLocal(control1), ToLocal(control2), last, true, true);
+                }
+                curve.Freeze();
+                drawingContext.DrawGeometry(null, CreatePen(Colors.Red, 1, 3), curve);
+                var direction = last - ToLocal(control2);
+                if (direction.Length < 0.01) direction = last - first;
+                if (direction.Length >= 0.01)
+                {
+                    direction.Normalize();
+                    var back = last - direction * 14;
+                    var wing = new Vector(-direction.Y, direction.X) * 6;
+                    drawingContext.DrawLine(CreatePen(Colors.Red, 1, 3), last, back + wing);
+                    drawingContext.DrawLine(CreatePen(Colors.Red, 1, 3), last, back - wing);
+                }
+                if (ReferenceEquals(stroke, QuickEditInkStore.SelectedArrow))
+                {
+                    var guide = new System.Windows.Media.Pen(GetBrush(Colors.DimGray, 0.95), 1) { DashStyle = DashStyles.Dot };
+                    guide.Freeze();
+                    drawingContext.DrawLine(guide, first, ToLocal(control1));
+                    drawingContext.DrawLine(guide, ToLocal(control2), last);
+                    foreach (var control in new[] { points[0], control1, control2, points[^1] })
+                        drawingContext.DrawEllipse(GetBrush(Colors.White, 0.95), CreatePen(Colors.Black, 0.9, 1), ToLocal(control), 4, 4);
+                }
+                continue;
+            }
+
+            if (stroke.Tool == QuickEditTool.Line)
+            {
+                drawingContext.DrawLine(CreatePen(Colors.Red, 1, 3), ToLocal(points[0]), ToLocal(points[^1]));
+                continue;
+            }
+
+            var geometry = new StreamGeometry();
+            using (var context = geometry.Open())
+            {
+                context.BeginFigure(ToLocal(points[0]), false, false);
+                context.PolyLineTo(points.Skip(1).Select(ToLocal).ToArray(), true, true);
+            }
+            geometry.Freeze();
+            var isHighlighter = stroke.Tool == QuickEditTool.Highlighter;
+            drawingContext.DrawGeometry(null,
+                CreatePen(isHighlighter ? Colors.Yellow : Colors.Red, isHighlighter ? 0.38 : 1, isHighlighter ? 18 : 3),
+                geometry);
+        }
+        drawingContext.Pop();
+        if (QuickEditInkStore.SelectedStroke is { Tool: QuickEditTool.StepBadge } selectedBadge)
+            drawingContext.DrawEllipse(null, CreatePen(Colors.DodgerBlue, 0.95, 1.5),
+                ToLocal(selectedBadge.Points[0]), QuickEditInkStore.StepBadgeRadius + 3,
+                QuickEditInkStore.StepBadgeRadius + 3);
+        if (QuickEditInkStore.SelectedStroke is { } selectedStroke && selectedStroke.Points.Count > 1
+            && selectedStroke.Tool is QuickEditTool.Line or QuickEditTool.Rectangle or QuickEditTool.Ellipse or QuickEditTool.Mosaic)
+        {
+            foreach (var point in selectedStroke.GetResizeHandles())
+                drawingContext.DrawEllipse(GetBrush(Colors.White, 0.95), CreatePen(Colors.Black, 0.9, 1), ToLocal(point), 4, 4);
+        }
+        if (QuickEditInkStore.SelectedCallout is { } selectedCallout)
+        {
+            var point = selectedCallout.CalloutTarget ?? selectedCallout.CalloutHandle;
+            drawingContext.DrawEllipse(GetBrush(Colors.White, 0.95), CreatePen(Colors.Red, 1, 1), ToLocal(point), 5, 5);
+        }
+    }
+
+    private void DrawQuickEditPalette(DrawingContext drawingContext, ScreenRect selection)
+    {
+        var palette = ToRect(QuickEditPalette.Bounds(selection));
+        drawingContext.DrawRoundedRectangle(GetBrush(MediaColor.FromRgb(38, 38, 38), 0.98),
+            CreatePen(Colors.White, 0.32, 1), palette, 4, 4);
+        var labels = new[] { "✎", "╱", "➜", "▭", "◯", "Т", "▦", "", "①", "Copy", "PNG", "×" };
+        var selectedTool = QuickEditInkStore.Tool;
+        for (var index = 0; index < labels.Length; index++)
+        {
+            var item = ToRect(QuickEditPalette.ItemBounds(selection, index));
+            if (index < 9 && QuickEditPalette.ToTool((QuickEditPaletteAction)index) == selectedTool)
+            {
+                drawingContext.DrawRoundedRectangle(GetBrush(Colors.DodgerBlue, 0.65), null,
+                    new Rect(item.Left + 2, item.Top + 2, item.Width - 4, item.Height - 4), 3, 3);
+            }
+            if (index == 7)
+            {
+                var center = new WpfPoint(item.Left + item.Width / 2, item.Top + item.Height / 2);
+                drawingContext.PushTransform(new RotateTransform(-38, center.X, center.Y));
+                drawingContext.DrawRoundedRectangle(GetBrush(Colors.Yellow, 0.95), CreatePen(Colors.Black, 0.9, 1),
+                    new Rect(center.X - 5, center.Y - 10, 10, 17), 2, 2);
+                drawingContext.DrawRectangle(GetBrush(Colors.Gold, 1), CreatePen(Colors.Black, 0.9, 1),
+                    new Rect(center.X - 5, center.Y + 5, 10, 5));
+                drawingContext.Pop();
+                continue;
+            }
+            var text = GetFormattedText(labels[index], Colors.White, 0.96, 12.5, 15);
+            drawingContext.DrawText(text,
+                new WpfPoint(item.Left + (item.Width - text.WidthIncludingTrailingWhitespace) / 2,
+                    item.Top + (item.Height - text.Height) / 2));
+        }
     }
 
     private void DrawRegionMasks(DrawingContext drawingContext)

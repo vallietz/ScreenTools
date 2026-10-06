@@ -43,12 +43,14 @@ internal sealed class TrayMenuBuilder
         var magnifierItem = CreateCheckedItem("Zoom", item => _controller.SetMagnifierEnabled(item.Checked));
         var pinnedLensItem = CreateItem("New pinned lens", _controller.TogglePinnedLens);
         var closePinnedLensesItem = new ToolStripMenuItem("Close all pinned lenses", null, (_, _) => _controller.ClosePinnedLenses());
+        var staticPinItem = CreateItem("New Pin", _controller.NewStaticPin);
+        var closeStaticPinsItem = new ToolStripMenuItem("Close all Pins", null, (_, _) => _controller.CloseAllStaticPins());
         var regionMaskItem = CreateItem("Mask", _controller.ToggleRegionMask);
         var clearRegionMasksItem = new ToolStripMenuItem("Clear masks", null, (_, _) => _controller.ClearRegionMasks());
         var fadingAnnotationsItem = CreateCheckedItem("Fading annotations", item => _controller.SetFadingAnnotationsEnabled(item.Checked));
         var toolbarItem = CreateCheckedItem("Toolbar", _ => _controller.ToggleToolbar());
         var screenshotItem = new ToolStripMenuItem("Current monitor", null, (_, _) => _controller.TakeScreenshot());
-        var regionScreenshotItem = new ToolStripMenuItem("Region screenshot", null, (_, _) => _controller.TakeRegionScreenshot());
+        var regionScreenshotItem = new ToolStripMenuItem("Quick edit region", null, (_, _) => _controller.TakeRegionScreenshot());
         var newTimerItem = CreateItem("New timer", _controller.NewTimer);
         var closeTimersItem = new ToolStripMenuItem("Close all timers", null, (_, _) => _controller.CloseAllTimers());
         var screenBoardItem = CreateCheckedItem("Screen board", _ => _controller.ToggleScreenBoard());
@@ -118,6 +120,9 @@ internal sealed class TrayMenuBuilder
         var pinnedLensMenu = new ToolStripMenuItem("Pinned lens");
         pinnedLensMenu.DropDownItems.Add(pinnedLensItem);
         pinnedLensMenu.DropDownItems.Add(closePinnedLensesItem);
+        var staticPinMenu = new ToolStripMenuItem("Pin");
+        staticPinMenu.DropDownItems.Add(staticPinItem);
+        staticPinMenu.DropDownItems.Add(closeStaticPinsItem);
 
         var regionMaskMenu = new ToolStripMenuItem("Mask");
         regionMaskMenu.DropDownItems.Add(regionMaskItem);
@@ -152,6 +157,7 @@ internal sealed class TrayMenuBuilder
         contextMenu.Items.Add(regionSpotlightMenuItem);
         contextMenu.Items.Add(magnifierItem);
         contextMenu.Items.Add(pinnedLensMenu);
+        contextMenu.Items.Add(staticPinMenu);
         contextMenu.Items.Add(new ToolStripSeparator());
         contextMenu.Items.Add(drawMenu);
         contextMenu.Items.Add(new ToolStripSeparator());
@@ -183,6 +189,8 @@ internal sealed class TrayMenuBuilder
             MagnifierItem = magnifierItem,
             PinnedLensItem = pinnedLensItem,
             ClosePinnedLensesItem = closePinnedLensesItem,
+            StaticPinItem = staticPinItem,
+            CloseStaticPinsItem = closeStaticPinsItem,
             RegionMaskItem = regionMaskItem,
             ClearRegionMasksItem = clearRegionMasksItem,
             FadingAnnotationsItem = fadingAnnotationsItem,

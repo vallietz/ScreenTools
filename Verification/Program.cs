@@ -33,6 +33,29 @@ internal static class Program
             VerifyStrokeSmoothingPreservesEndpointsAndCorners();
             VerifyHighlighterUsesFixedRectangularNib();
             VerifyHighlighterDrawAndHoldLocksAndTracksEndpoint();
+            VerifyStaticPinAspectRatioSizing();
+            VerifyStaticPinStrokeSegmentsSplitAtBounds();
+            VerifyStaticPinStrokeSegmentsEnterAndExitBounds();
+            VerifyStaticPinRoutingAcrossMultiplePins();
+            VerifyStaticPinLiveDraftPromotesArrowAtGestureEnd();
+            VerifyStaticPinInkEraserPreservesSnapshotLayer();
+            VerifyStaticPinBorderStyles();
+            VerifyStaticPinShortcutDefaultAndClone();
+            VerifySnapshotQuickEditFrameGeometry();
+            VerifyQuickEditDraftSelectionMaskEligibility();
+            VerifyQuickEditSelectionCursor();
+            VerifyQuickEditPaletteAndGestureTools();
+            VerifyCurvedArrowGeometry();
+            VerifyEditableCurvedAnnotationArrow();
+            VerifyEditableQuickEditArrow();
+            VerifyQuickEditExportIncludesArrow();
+            VerifyStaticPinArrowControls();
+            VerifyFineQuickEditMosaic();
+            VerifyQuickEditTextCallout();
+            VerifyQuickEditObjectEditingAndHistory();
+            VerifyQuickEditEllipseHandlesOnContour();
+            VerifyQuickEditStepBadges();
+            VerifyQuickEditStepBadgeExport();
             Console.WriteLine("FocusTool verification checks passed.");
             return 0;
         }
@@ -41,6 +64,138 @@ internal static class Program
             Console.Error.WriteLine(ex);
             return 1;
         }
+    }
+
+    private static void VerifyQuickEditObjectEditingAndHistory()
+    {
+        foreach (var tool in new[] { QuickEditTool.Line, QuickEditTool.Arrow, QuickEditTool.Rectangle,
+            QuickEditTool.Ellipse, QuickEditTool.Highlighter, QuickEditTool.Pencil })
+        {
+            QuickEditInkStore.Reset();
+            QuickEditInkStore.Tool = tool;
+            QuickEditInkStore.Begin(new ScreenPoint(10, 10));
+            QuickEditInkStore.Add(new ScreenPoint(60, 50));
+            QuickEditInkStore.Commit();
+            var grab = tool switch
+            {
+                QuickEditTool.Rectangle => new ScreenPoint(35, 10),
+                QuickEditTool.Ellipse => new ScreenPoint(35, 10),
+                _ => new ScreenPoint(35, 30),
+            };
+            if (!QuickEditInkStore.TryBeginStrokeDrag(grab))
+                throw new InvalidOperationException($"Quick Edit {tool} cannot be selected and moved.");
+            QuickEditInkStore.UpdateStrokeDrag(grab.Offset(10, 10));
+            QuickEditInkStore.EndStrokeDrag();
+            if (QuickEditInkStore.Strokes.Single().Points[0] != new ScreenPoint(20, 20))
+                throw new InvalidOperationException($"Quick Edit {tool} did not move.");
+        }
+        QuickEditInkStore.Reset();
+        QuickEditInkStore.Tool = QuickEditTool.Rectangle;
+        QuickEditInkStore.Begin(new ScreenPoint(10, 10));
+        QuickEditInkStore.Add(new ScreenPoint(60, 50));
+        QuickEditInkStore.Commit();
+        if (!QuickEditInkStore.TryBeginStrokeDrag(new ScreenPoint(35, 10)))
+            throw new InvalidOperationException("Quick Edit rectangle cannot be reselected.");
+        QuickEditInkStore.UpdateStrokeDrag(new ScreenPoint(45, 20));
+        QuickEditInkStore.EndStrokeDrag();
+        if (QuickEditInkStore.Strokes.Single().Points[0] != new ScreenPoint(20, 20))
+            throw new InvalidOperationException("Quick Edit rectangle did not move.");
+        if (!QuickEditInkStore.Undo() || QuickEditInkStore.Strokes.Single().Points[0] != new ScreenPoint(10, 10))
+            throw new InvalidOperationException("Ctrl+Z history did not restore moved rectangle.");
+        if (!QuickEditInkStore.Redo() || QuickEditInkStore.Strokes.Single().Points[0] != new ScreenPoint(20, 20))
+            throw new InvalidOperationException("Redo did not restore moved rectangle.");
+        if (!QuickEditInkStore.TryBeginStrokeDrag(new ScreenPoint(45, 20)))
+            throw new InvalidOperationException("Quick Edit rectangle cannot be selected after undo/redo.");
+        QuickEditInkStore.EndStrokeDrag();
+        if (!QuickEditInkStore.DeleteSelected() || QuickEditInkStore.Strokes.Count != 0)
+            throw new InvalidOperationException("Delete must remove the selected object.");
+        if (!QuickEditInkStore.Undo() || QuickEditInkStore.Strokes.Count != 1)
+            throw new InvalidOperationException("Deleting an object must be undoable.");
+
+        QuickEditInkStore.Reset();
+        QuickEditInkStore.AddText(new ScreenPoint(20, 20), "callout");
+        var callout = QuickEditInkStore.Strokes.Single();
+        if (!QuickEditInkStore.TryBeginCalloutPointerDrag(callout.CalloutHandle))
+            throw new InvalidOperationException("Text pointer handle cannot start a drag.");
+        QuickEditInkStore.UpdateCalloutPointerDrag(new ScreenPoint(150, 150));
+        QuickEditInkStore.EndCalloutPointerDrag();
+        if (callout.CalloutTarget != new ScreenPoint(150, 150))
+            throw new InvalidOperationException("Text pointer handle did not extend the pointer.");
+    }
+
+    private static void VerifyQuickEditEllipseHandlesOnContour()
+    {
+        QuickEditInkStore.Reset();
+        QuickEditInkStore.Tool = QuickEditTool.Ellipse;
+        QuickEditInkStore.Begin(new ScreenPoint(10, 10));
+        QuickEditInkStore.Add(new ScreenPoint(60, 50));
+        QuickEditInkStore.Commit();
+        var handles = QuickEditInkStore.Strokes.Single().GetResizeHandles();
+        if (!handles.SequenceEqual(new[] { new ScreenPoint(35, 10), new ScreenPoint(60, 30),
+            new ScreenPoint(35, 50), new ScreenPoint(10, 30) }))
+            throw new InvalidOperationException("All ellipse handles must lie on its contour.");
+        if (!QuickEditInkStore.TryBeginResizeDrag(new ScreenPoint(35, 10)))
+            throw new InvalidOperationException("Ellipse top contour handle cannot be dragged.");
+        QuickEditInkStore.UpdateResizeDrag(new ScreenPoint(35, 0));
+        QuickEditInkStore.EndResizeDrag();
+        if (QuickEditInkStore.Strokes.Single().Points[0] != new ScreenPoint(10, 0))
+            throw new InvalidOperationException("Top handle must resize the ellipse vertically.");
+        if (!QuickEditInkStore.TryBeginResizeDrag(new ScreenPoint(60, 25)))
+            throw new InvalidOperationException("Ellipse right contour handle cannot be dragged.");
+        QuickEditInkStore.UpdateResizeDrag(new ScreenPoint(80, 25));
+        QuickEditInkStore.EndResizeDrag();
+        if (QuickEditInkStore.Strokes.Single().Points[^1] != new ScreenPoint(80, 50))
+            throw new InvalidOperationException("Right handle must resize the ellipse horizontally.");
+    }
+
+    private static void VerifyQuickEditStepBadges()
+    {
+        var paletteFrame = new ScreenRect(10, 10, 310, 210);
+        var badgeButton = QuickEditPalette.ItemBounds(paletteFrame, 8);
+        var badgeButtonCenter = new ScreenPoint((badgeButton.Left + badgeButton.Right) / 2, (badgeButton.Top + badgeButton.Bottom) / 2);
+        if (!QuickEditPalette.TryHit(paletteFrame, badgeButtonCenter, out var badgeAction)
+            || badgeAction != QuickEditPaletteAction.StepBadge
+            || QuickEditPalette.ToTool(badgeAction) != QuickEditTool.StepBadge)
+            throw new InvalidOperationException("Quick Edit palette must expose the step badge tool.");
+        QuickEditInkStore.Reset();
+        QuickEditInkStore.Tool = QuickEditTool.StepBadge;
+        QuickEditInkStore.PlaceStepBadge(new ScreenPoint(30, 30));
+        QuickEditInkStore.PlaceStepBadge(new ScreenPoint(80, 30));
+        QuickEditInkStore.PlaceStepBadge(new ScreenPoint(130, 30));
+        var badges = QuickEditInkStore.Strokes;
+        if (badges.Count != 3 || badges.Select(b => QuickEditInkStore.StepNumber(badges, b)).SequenceEqual(new[] { 1, 2, 3 }) == false)
+            throw new InvalidOperationException("Quick Edit badges must be numbered by placement order.");
+        if (!QuickEditInkStore.TryBeginStrokeDrag(new ScreenPoint(80, 30)))
+            throw new InvalidOperationException("A step badge must be selectable.");
+        QuickEditInkStore.UpdateStrokeDrag(new ScreenPoint(95, 40));
+        QuickEditInkStore.EndStrokeDrag();
+        if (badges[1].Points[0] != new ScreenPoint(95, 40) || QuickEditInkStore.StepNumber(badges, badges[1]) != 2)
+            throw new InvalidOperationException("Moving a badge must preserve its number.");
+        if (!QuickEditInkStore.DeleteSelected() || badges.Count != 2 || QuickEditInkStore.StepNumber(badges, badges[1]) != 2)
+            throw new InvalidOperationException("Deleting a badge must close the numbering gap.");
+        if (!QuickEditInkStore.Undo() || badges.Count != 3 || QuickEditInkStore.StepNumber(badges, badges[1]) != 2)
+            throw new InvalidOperationException("Undo must restore the deleted numbered badge.");
+    }
+
+    private static void VerifyQuickEditStepBadgeExport()
+    {
+        var source = CreateBitmap(64, 64, Enumerable.Repeat((byte)255, 64 * 64 * 4).ToArray());
+        var badge = new QuickEditStroke(QuickEditTool.StepBadge, [new ScreenPoint(32, 32)]);
+        var output = QuickEditImageComposer.Compose(source, new ScreenRect(0, 0, 64, 64), [badge], null);
+        var pixels = new byte[64 * 64 * 4];
+        output.CopyPixels(pixels, 64 * 4, 0);
+        var redPixels = 0;
+        var whiteNumberPixels = 0;
+        for (var y = 18; y <= 46; y++)
+        for (var x = 18; x <= 46; x++)
+        {
+            var offset = (y * 64 + x) * 4;
+            if (pixels[offset + 2] > 180 && pixels[offset + 1] < 80 && pixels[offset] < 80) redPixels++;
+            if (x is >= 27 and <= 37 && y is >= 24 and <= 40
+                && pixels[offset] > 200 && pixels[offset + 1] > 200 && pixels[offset + 2] > 200) whiteNumberPixels++;
+        }
+        if (redPixels < 200 || whiteNumberPixels == 0)
+            throw new InvalidOperationException("Exported step badge must contain a red circle and white number.");
     }
 
     private static void RunHighlighterBenchmark()
@@ -477,6 +632,532 @@ internal static class Program
         if (document.Draft?.End != new ScreenPoint(120, 45))
         {
             throw new InvalidOperationException("Locked highlighter endpoint could not be adjusted before release.");
+        }
+    }
+
+    private static void VerifyStaticPinAspectRatioSizing()
+    {
+        var initial = new ScreenRect(100, 100, 500, 300);
+        var resized = StaticPinGeometry.ResizeFromBottomRight(initial, new ScreenPoint(700, 400), 48);
+        if (Math.Abs(resized.Width / resized.Height - 2) > 0.001
+            || Math.Abs(resized.Right - 700) > 0.001
+            || resized.Left != initial.Left
+            || resized.Top != initial.Top)
+        {
+            throw new InvalidOperationException("Static pin resize did not preserve its source aspect ratio and fixed origin.");
+        }
+
+        var minimum = StaticPinGeometry.ResizeFromBottomRight(initial, new ScreenPoint(110, 110), 48);
+        if (minimum.Width < 48 || minimum.Height < 24 || Math.Abs(minimum.Width / minimum.Height - 2) > 0.001)
+        {
+            throw new InvalidOperationException("Static pin resize crossed its minimum size or broke its aspect ratio.");
+        }
+
+        var left = StaticPinGeometry.Resize(new ScreenRect(100, 100, 500, 300), 50, 0, StaticPinResizeHandle.Left, 80);
+        if (Math.Abs(left.Width / left.Height - 2) > 0.001 || Math.Abs(left.Right - 500) > 0.001 || left.Left <= 100)
+        {
+            throw new InvalidOperationException("Static pin left-edge resize did not preserve its ratio and opposite edge.");
+        }
+
+        var top = StaticPinGeometry.Resize(new ScreenRect(100, 100, 500, 300), 0, 50, StaticPinResizeHandle.Top, 80);
+        if (Math.Abs(top.Width / top.Height - 2) > 0.001 || Math.Abs(top.Bottom - 300) > 0.001 || top.Top <= 100)
+        {
+            throw new InvalidOperationException("Static pin top-edge resize did not preserve its ratio and opposite edge.");
+        }
+
+        var minimumCard = StaticPinGeometry.ScaleToMinimum(16, 100, 48);
+        if (minimumCard.Width != 48 || minimumCard.Height != 300 || Math.Abs(minimumCard.Width / (double)minimumCard.Height - 0.16) > 0.001)
+        {
+            throw new InvalidOperationException("Small static pin display scaling did not preserve the captured image aspect ratio.");
+        }
+    }
+
+    private static void VerifyStaticPinShortcutDefaultAndClone()
+    {
+        var shortcuts = new ShortcutSettings();
+        if (shortcuts.NewStaticPin != "Alt+Shift+W")
+        {
+            throw new InvalidOperationException("Static Pin shortcut default was not initialized.");
+        }
+
+        shortcuts.NewStaticPin = "Ctrl+Shift+P";
+        var copy = shortcuts.Clone();
+        copy.Normalize();
+        if (copy.NewStaticPin != "Ctrl+Shift+P")
+        {
+            throw new InvalidOperationException("A customized Static Pin shortcut was not preserved when cloning settings.");
+        }
+    }
+
+    private static void VerifyStaticPinStrokeSegmentsSplitAtBounds()
+    {
+        var fragments = StaticPinGeometry.SplitSegment(
+            new ScreenPoint(0, 50),
+            new ScreenPoint(200, 50),
+            new ScreenRect(50, 0, 150, 100));
+
+        AssertStrokeFragments(
+            fragments,
+            (new ScreenPoint(0, 50), new ScreenPoint(50, 50), false),
+            (new ScreenPoint(50, 50), new ScreenPoint(150, 50), true),
+            (new ScreenPoint(150, 50), new ScreenPoint(200, 50), false));
+    }
+
+    private static void VerifyStaticPinStrokeSegmentsEnterAndExitBounds()
+    {
+        var bounds = new ScreenRect(50, 0, 150, 100);
+        AssertStrokeFragments(
+            StaticPinAnnotationRouter.Route(AnnotationTool.Pencil, new ScreenPoint(0, 50), new ScreenPoint(100, 50), bounds),
+            (new ScreenPoint(0, 50), new ScreenPoint(50, 50), false),
+            (new ScreenPoint(50, 50), new ScreenPoint(100, 50), true));
+        AssertStrokeFragments(
+            StaticPinAnnotationRouter.Route(AnnotationTool.Arrow, new ScreenPoint(100, 50), new ScreenPoint(200, 50), bounds),
+            (new ScreenPoint(100, 50), new ScreenPoint(150, 50), true),
+            (new ScreenPoint(150, 50), new ScreenPoint(200, 50), false));
+        AssertStrokeFragments(
+            StaticPinAnnotationRouter.Route(AnnotationTool.Line, new ScreenPoint(0, 50), new ScreenPoint(200, 50), bounds),
+            (new ScreenPoint(0, 50), new ScreenPoint(50, 50), false),
+            (new ScreenPoint(50, 50), new ScreenPoint(150, 50), true),
+            (new ScreenPoint(150, 50), new ScreenPoint(200, 50), false));
+
+        try
+        {
+            _ = StaticPinAnnotationRouter.Route(AnnotationTool.Rectangle, new ScreenPoint(0, 50), new ScreenPoint(200, 50), bounds);
+        }
+        catch (ArgumentOutOfRangeException)
+        {
+            return;
+        }
+
+        throw new InvalidOperationException("Static pin router accepted a tool that is not represented by a segment.");
+    }
+
+    private static void VerifyStaticPinRoutingAcrossMultiplePins()
+    {
+        var routed = StaticPinAnnotationRouter.RouteAcrossPins(
+            AnnotationTool.Arrow,
+            new ScreenPoint(0, 50),
+            new ScreenPoint(200, 50),
+            [new ScreenRect(125, 0, 175, 100), new ScreenRect(50, 0, 100, 100)]);
+
+        if (routed.Count != 5
+            || routed[0].PinIndex is not null
+            || routed[1].PinIndex != 1
+            || routed[2].PinIndex is not null
+            || routed[3].PinIndex != 0
+            || routed[4].PinIndex is not null
+            || routed[1].Fragment.Start != new ScreenPoint(50, 50)
+            || routed[1].Fragment.End != new ScreenPoint(100, 50)
+            || routed[3].Fragment.Start != new ScreenPoint(125, 50)
+            || routed[3].Fragment.End != new ScreenPoint(175, 50))
+        {
+            throw new InvalidOperationException("Static pin routing did not split an outside-to-outside segment across every pin in order.");
+        }
+    }
+
+    private static void VerifyStaticPinLiveDraftPromotesArrowAtGestureEnd()
+    {
+        var document = new AnnotationDocument(() => 1000);
+        var settings = new AppSettings();
+        var start = new ScreenPoint(10, 10);
+        var end = new ScreenPoint(120, 40);
+
+        // A Line draft is the live preview while the pointer moves. It must be
+        // visible before mouse-up, then become the single final Arrow only when
+        // the gesture ends outside a pin.
+        document.BeginStroke(AnnotationTool.Line, start, settings);
+        document.UpdateStroke(end, shift: false);
+        if (document.Draft is not { Tool: AnnotationTool.Line, End: var draftEnd } || draftEnd != end)
+        {
+            throw new InvalidOperationException("Static pin external stroke was not visible as a live draft.");
+        }
+
+        document.CommitDraftAs(AnnotationTool.Arrow);
+        if (document.Shapes.Count != 1 || document.Shapes[0].Tool != AnnotationTool.Arrow)
+        {
+            throw new InvalidOperationException("Static pin final external stroke was not promoted to one arrow.");
+        }
+    }
+
+    private static void VerifyStaticPinInkEraserPreservesSnapshotLayer()
+    {
+        using var ink = new System.Drawing.Bitmap(48, 24, System.Drawing.Imaging.PixelFormat.Format32bppPArgb);
+        using (var graphics = System.Drawing.Graphics.FromImage(ink))
+        {
+            graphics.Clear(System.Drawing.Color.Transparent);
+            using var pen = new System.Drawing.Pen(System.Drawing.Color.Red, 4);
+            graphics.DrawLine(pen, 4, 7, 42, 7);
+            graphics.DrawLine(pen, 4, 17, 42, 17);
+        }
+
+        if (!StaticPinInkEraser.EraseConnectedComponent(ink, new System.Drawing.PointF(20, 7), 4)
+            || ink.GetPixel(20, 7).A != 0
+            || ink.GetPixel(20, 17).A == 0)
+        {
+            throw new InvalidOperationException("Static pin eraser did not remove exactly the touched ink stroke.");
+        }
+
+        StaticPinInkEraser.Clear(ink);
+        if (ink.GetPixel(20, 17).A != 0)
+        {
+            throw new InvalidOperationException("Static pin global clear did not remove its remaining ink.");
+        }
+    }
+
+    private static void VerifySnapshotQuickEditFrameGeometry()
+    {
+        var initialFrame = new ScreenRect(100, 100, 500, 400);
+        var movedFrame = SnapshotQuickEditGeometry.MoveFrame(
+            initialFrame,
+            new ScreenPoint(150, 150),
+            new ScreenPoint(210, 185));
+        if (movedFrame != new ScreenRect(160, 135, 560, 435))
+        {
+            throw new InvalidOperationException("Quick-edit snapshot frame did not move with the pointer.");
+        }
+
+        var panel = SnapshotQuickEditGeometry.GetDefaultPanelBounds(
+            initialFrame,
+            panelWidth: 360,
+            panelHeight: 34,
+            workArea: new ScreenRect(0, 0, 800, 600));
+        if (panel != new ScreenRect(100, 408, 460, 442))
+        {
+            throw new InvalidOperationException("Quick-edit toolbar was not positioned directly below its snapshot frame.");
+        }
+
+        var resizedFrame = SnapshotQuickEditGeometry.ResizeFrame(
+            initialFrame,
+            RectResizeHandle.BottomRight,
+            new ScreenPoint(640, 520));
+        if (resizedFrame != new ScreenRect(100, 100, 640, 520))
+        {
+            throw new InvalidOperationException("Quick-edit snapshot frame did not resize from its selected handle.");
+        }
+
+        var session = new SnapshotQuickEditSession(initialFrame);
+        if (!session.TryBeginFrameEdit(new ScreenPoint(102, 102)))
+        {
+            throw new InvalidOperationException("Quick-edit session did not start a resize from the frame corner.");
+        }
+
+        session.UpdateFrameEdit(new ScreenPoint(80, 70));
+        session.EndFrameEdit();
+        if (session.Frame != new ScreenRect(80, 70, 500, 400))
+        {
+            throw new InvalidOperationException("Quick-edit session did not retain the resized frame.");
+        }
+
+        if (!session.TryBeginFrameEdit(new ScreenPoint(250, 200)))
+        {
+            throw new InvalidOperationException("Quick-edit session did not start a frame move from its body.");
+        }
+
+        session.UpdateFrameEdit(new ScreenPoint(300, 250));
+        session.EndFrameEdit();
+        if (session.Frame != new ScreenRect(130, 120, 550, 450))
+        {
+            throw new InvalidOperationException("Quick-edit session did not retain the moved frame.");
+        }
+    }
+
+    private static void VerifyQuickEditDraftSelectionMaskEligibility()
+    {
+        var draft = new RectOverlayVisual(
+            new ScreenRect(100, 100, 500, 400),
+            IsDraft: true,
+            ShowHandles: false,
+            ShowReadout: false);
+
+        var draftOptions = OverlaySurface.GetQuickEditRenderOptions(InteractionMode.ScreenshotRegionSelect, draft);
+        if (!draftOptions.DrawOuterDim || draftOptions.ShowPaletteAndInk || draftOptions.ShowSelectionFill)
+        {
+            throw new InvalidOperationException("Quick Edit draft did not keep the selected area free of visual effects while a selection was being dragged.");
+        }
+
+        var committed = draft with { IsDraft = false };
+        var committedOptions = OverlaySurface.GetQuickEditRenderOptions(InteractionMode.ScreenshotRegionSelect, committed);
+        if (!committedOptions.DrawOuterDim || !committedOptions.ShowPaletteAndInk || committedOptions.ShowSelectionFill)
+        {
+            throw new InvalidOperationException("Quick Edit completed selection did not keep its selected area free of the blue fill.");
+        }
+
+        var nonQuickEditOptions = OverlaySurface.GetQuickEditRenderOptions(InteractionMode.RegionMaskSelect, draft);
+        if (nonQuickEditOptions.DrawOuterDim || nonQuickEditOptions.ShowPaletteAndInk || !nonQuickEditOptions.ShowSelectionFill)
+        {
+            throw new InvalidOperationException("A non-Quick-Edit rectangle selection incorrectly applied Quick Edit rendering.");
+        }
+    }
+
+    private static void VerifyQuickEditTextCallout()
+    {
+        QuickEditInkStore.Reset();
+        QuickEditInkStore.BeginText(new ScreenPoint(20, 30));
+        QuickEditInkStore.AppendText("Привет");
+        QuickEditInkStore.CommitText();
+        var callout = QuickEditInkStore.Strokes.Single();
+        if (callout.Text != "Привет" || !QuickEditInkStore.TryBeginCalloutPointerDrag(callout.CalloutHandle))
+            throw new InvalidOperationException("Inline Quick Edit text must expose a draggable callout pointer.");
+        QuickEditInkStore.UpdateCalloutPointerDrag(new ScreenPoint(120, 140));
+        QuickEditInkStore.EndCalloutPointerDrag();
+        if (callout.CalloutTarget != new ScreenPoint(120, 140))
+            throw new InvalidOperationException("The callout pointer must follow its drag target.");
+        var white = Enumerable.Repeat((byte)255, 160 * 160 * 4).ToArray();
+        var image = BitmapSource.Create(160, 160, 96, 96, PixelFormats.Bgra32, null, white, 640);
+        var exported = QuickEditImageComposer.Compose(image, new ScreenRect(0, 0, 160, 160), [callout], null);
+        var output = new byte[white.Length];
+        exported.CopyPixels(output, 640, 0);
+        var pointerPixel = (100 * 160 + 100) * 4;
+        if (output[pointerPixel + 2] <= output[pointerPixel + 1])
+            throw new InvalidOperationException("A Quick Edit text callout pointer must be included in exported pixels.");
+        QuickEditInkStore.Reset();
+    }
+
+    private static void VerifyFineQuickEditMosaic()
+    {
+        var pixels = new byte[12 * 12 * 4];
+        for (var y = 0; y < 12; y++)
+        for (var x = 0; x < 12; x++)
+        {
+            var offset = (y * 12 + x) * 4;
+            var value = (byte)(x < 6 ? 0 : 255);
+            pixels[offset] = pixels[offset + 1] = pixels[offset + 2] = value;
+            pixels[offset + 3] = 255;
+        }
+        var source = BitmapSource.Create(12, 12, 96, 96, PixelFormats.Bgra32, null, pixels, 48);
+        QuickEditInkStore.SetSource(new ScreenRect(0, 0, 12, 12), source);
+        var mosaic = new byte[pixels.Length];
+        QuickEditInkStore.PixelatedSource!.CopyPixels(mosaic, 48, 0);
+        if (mosaic[(4 * 12 + 2) * 4] != 0 || mosaic[(4 * 12 + 8) * 4] != 255)
+            throw new InvalidOperationException("Quick Edit mosaic blocks must preserve detail at a six-pixel scale.");
+        QuickEditInkStore.Reset();
+    }
+
+    private static void VerifyStaticPinArrowControls()
+    {
+        var arrow = new StaticPinArrow(new ScreenPoint(10, 20), new ScreenPoint(100, 20), "#FF0000", 3);
+        if (!arrow.TryHitControl(new ScreenPoint(40, 20), out var index) || index != 1)
+        {
+            throw new InvalidOperationException("A Static Pin arrow must expose its first Bézier control in source coordinates.");
+        }
+        arrow.SetControl(index, new ScreenPoint(40, 50));
+        if (arrow.GetControls().First != new ScreenPoint(40, 50)
+            || arrow.GetControls().Second != new ScreenPoint(70, 20))
+        {
+            throw new InvalidOperationException("Editing one Static Pin control must preserve the other.");
+        }
+        if (!arrow.TryHitControl(new ScreenPoint(100, 20), out var endHandle) || endHandle != 4)
+            throw new InvalidOperationException("The Static Pin arrow endpoint must be draggable.");
+        arrow.SetControl(endHandle, new ScreenPoint(110, 30));
+        if (arrow.End != new ScreenPoint(110, 30))
+            throw new InvalidOperationException("Dragging the Static Pin arrow endpoint must update its geometry.");
+    }
+
+    private static void VerifyQuickEditExportIncludesArrow()
+    {
+        var pixels = Enumerable.Repeat((byte)255, 100 * 100 * 4).ToArray();
+        var source = BitmapSource.Create(100, 100, 96, 96, PixelFormats.Bgra32, null, pixels, 400);
+        source.Freeze();
+        var frame = new ScreenRect(0, 0, 100, 100);
+        var arrow = new QuickEditStroke(QuickEditTool.Arrow,
+            [new ScreenPoint(10, 50), new ScreenPoint(90, 50)]);
+        arrow.SetArrowControl(1, new ScreenPoint(35, 10));
+        arrow.SetArrowControl(2, new ScreenPoint(65, 10));
+        var exported = QuickEditImageComposer.Compose(source, frame, [arrow], null);
+        var output = new byte[100 * 100 * 4];
+        exported.CopyPixels(output, 400, 0);
+        var curvePixel = (20 * 100 + 50) * 4;
+        if (output[curvePixel + 2] <= output[curvePixel + 1]
+            || output[curvePixel + 2] <= output[curvePixel])
+        {
+            throw new InvalidOperationException("A copied Quick Edit image must contain its curved arrow.");
+        }
+    }
+
+    private static void VerifyEditableQuickEditArrow()
+    {
+        QuickEditInkStore.Reset();
+        QuickEditInkStore.Tool = QuickEditTool.Arrow;
+        QuickEditInkStore.Begin(new ScreenPoint(10, 10));
+        QuickEditInkStore.Add(new ScreenPoint(100, 10));
+        QuickEditInkStore.Commit();
+        var arrow = QuickEditInkStore.Strokes.Single();
+        var (first, second) = arrow.GetArrowControls();
+        if (first != new ScreenPoint(40, 10) || second != new ScreenPoint(70, 10)
+            || !QuickEditInkStore.TryBeginArrowControlDrag(first))
+        {
+            throw new InvalidOperationException("A Quick Edit arrow must expose two draggable controls.");
+        }
+        QuickEditInkStore.UpdateArrowControlDrag(new ScreenPoint(40, 40));
+        QuickEditInkStore.EndArrowControlDrag();
+        if (arrow.GetArrowControls().First != new ScreenPoint(40, 40)
+            || arrow.GetArrowControls().Second != second)
+        {
+            throw new InvalidOperationException("Dragging the first Quick Edit arrow control must not move the second.");
+        }
+        if (!QuickEditInkStore.TryBeginArrowControlDrag(new ScreenPoint(100, 10)))
+            throw new InvalidOperationException("The Quick Edit arrow endpoint must be draggable.");
+        QuickEditInkStore.UpdateArrowControlDrag(new ScreenPoint(110, 20));
+        QuickEditInkStore.EndArrowControlDrag();
+        if (arrow.Points[^1] != new ScreenPoint(110, 20))
+            throw new InvalidOperationException("Dragging the Quick Edit arrow endpoint must update its geometry.");
+        QuickEditInkStore.Tool = QuickEditTool.Line;
+        if (!QuickEditInkStore.TrySelectArrowAt(new ScreenPoint(75, 17))
+            || !ReferenceEquals(QuickEditInkStore.SelectedArrow, arrow))
+        {
+            throw new InvalidOperationException("An existing Quick Edit arrow must be selectable after switching tools.");
+        }
+        QuickEditInkStore.Reset();
+    }
+
+    private static void VerifyEditableCurvedAnnotationArrow()
+    {
+        var arrow = new AnnotationShape
+        {
+            Tool = AnnotationTool.Arrow,
+            Start = new ScreenPoint(0, 0),
+            End = new ScreenPoint(90, 0)
+        };
+        var (first, second) = arrow.GetArrowControls();
+        if (!AnnotationHitTesting.TryHitEditHandle(arrow, first, out var handle)
+            || handle != AnnotationEditHandle.Control1)
+        {
+            throw new InvalidOperationException("The first curved-arrow control must have an editable hit target.");
+        }
+        AnnotationGeometry.ResizeShape(arrow, handle, new ScreenPoint(30, 30), shift: false);
+        var moved = arrow.Clone();
+        moved.Offset(10, 20);
+        var (movedFirst, movedSecond) = moved.GetArrowControls();
+        if (movedFirst != new ScreenPoint(40, 50) || movedSecond != new ScreenPoint(70, 20)
+            || moved.Start != new ScreenPoint(10, 20) || moved.End != new ScreenPoint(100, 20))
+        {
+            throw new InvalidOperationException("Cloning and moving an arrow must preserve its bend.");
+        }
+        arrow.SetArrowControl(1, new ScreenPoint(30, 80));
+        arrow.SetArrowControl(2, new ScreenPoint(60, 80));
+        if (!AnnotationHitTesting.TryFindShapeAt([arrow], new ScreenPoint(45, 60), out _)
+            || AnnotationHitTesting.TryFindShapeAt([arrow], new ScreenPoint(45, 0), out _))
+        {
+            throw new InvalidOperationException("Arrow hit testing must follow the curve, not the original chord.");
+        }
+        var document = new AnnotationDocument(() => 0);
+        document.BeginStroke(AnnotationTool.Arrow, new ScreenPoint(0, 0), new AppSettings());
+        document.UpdateStroke(new ScreenPoint(90, 0), shift: false);
+        document.CommitStroke();
+        if (document.ObjectEditShape?.Tool != AnnotationTool.Arrow)
+        {
+            throw new InvalidOperationException("A newly drawn arrow must expose its control handles immediately.");
+        }
+    }
+
+    private static void VerifyCurvedArrowGeometry()
+    {
+        var start = new ScreenPoint(0, 0);
+        var end = new ScreenPoint(90, 0);
+        var (first, second) = CurvedArrowGeometry.DefaultControls(start, end);
+        if (first != new ScreenPoint(30, 0) || second != new ScreenPoint(60, 0)
+            || CurvedArrowGeometry.PointAt(start, first, second, end, 0.5) != new ScreenPoint(45, 0)
+            || CurvedArrowGeometry.TangentAt(start, first, second, end, 1) != new ScreenPoint(90, 0))
+        {
+            throw new InvalidOperationException("A new arrow must be straight with a tangent aligned to its endpoint.");
+        }
+
+        var curvedMiddle = CurvedArrowGeometry.PointAt(start, new ScreenPoint(30, 30), second, end, 0.5);
+        if (curvedMiddle.Y <= 0 || CurvedArrowGeometry.PointAt(start, new ScreenPoint(30, 30), second, end, 1) != end)
+        {
+            throw new InvalidOperationException("Moving a control point must bend the shaft without moving the arrow endpoint.");
+        }
+    }
+
+    private static void VerifyQuickEditSelectionCursor()
+    {
+        var draft = new RectOverlayVisual(new ScreenRect(100, 100, 500, 400),
+            IsDraft: true, ShowHandles: false, ShowReadout: true);
+        if (AnnotationCursor.ForQuickEditSelection(null) != System.Windows.Input.Cursors.Cross
+            || AnnotationCursor.ForQuickEditSelection(draft) != System.Windows.Input.Cursors.Cross
+            || AnnotationCursor.ForQuickEditSelection(draft with { IsDraft = false }) == System.Windows.Input.Cursors.Arrow)
+        {
+            throw new InvalidOperationException("Quick Edit must use a crosshair while selecting and a tool cursor after selection.");
+        }
+    }
+
+    private static void VerifyQuickEditPaletteAndGestureTools()
+    {
+        var frame = new ScreenRect(100, 100, 500, 400);
+        for (var index = 0; index < QuickEditPalette.ItemCount; index++)
+        {
+            var item = QuickEditPalette.ItemBounds(frame, index);
+            var center = new ScreenPoint((item.Left + item.Right) / 2, (item.Top + item.Bottom) / 2);
+            if (!QuickEditPalette.TryHit(frame, center, out var action) || (int)action != index)
+            {
+                throw new InvalidOperationException($"Quick Edit palette item {index} does not match its click target.");
+            }
+        }
+
+        foreach (var tool in new[] { QuickEditTool.Line, QuickEditTool.Arrow, QuickEditTool.Rectangle, QuickEditTool.Ellipse, QuickEditTool.Mosaic })
+        {
+            QuickEditInkStore.Reset();
+            QuickEditInkStore.Tool = tool;
+            QuickEditInkStore.Begin(new ScreenPoint(10, 10));
+            QuickEditInkStore.Add(new ScreenPoint(40, 20));
+            QuickEditInkStore.Add(new ScreenPoint(80, 50));
+            QuickEditInkStore.Commit();
+            if (QuickEditInkStore.Strokes.Single().Points.Count != 2
+                || QuickEditInkStore.Strokes.Single().Points[^1] != new ScreenPoint(80, 50))
+            {
+                throw new InvalidOperationException($"Quick Edit {tool} retained a pencil path instead of start/end geometry.");
+            }
+        }
+
+        QuickEditInkStore.Reset();
+        QuickEditInkStore.AddText(new ScreenPoint(20, 30), "Текст");
+        if (QuickEditInkStore.Strokes.Single().Text != "Текст")
+        {
+            throw new InvalidOperationException("Quick Edit text tool did not retain entered text.");
+        }
+        QuickEditInkStore.Reset();
+    }
+
+    private static void AssertStrokeFragments(
+        IReadOnlyList<StaticPinStrokeFragment> actual,
+        params (ScreenPoint Start, ScreenPoint End, bool Inside)[] expected)
+    {
+        if (actual.Count != expected.Length)
+        {
+            throw new InvalidOperationException($"Expected {expected.Length} pin stroke fragments but got {actual.Count}.");
+        }
+
+        for (var index = 0; index < expected.Length; index++)
+        {
+            if (actual[index].Start != expected[index].Start
+                || actual[index].End != expected[index].End
+                || actual[index].Inside != expected[index].Inside)
+            {
+                throw new InvalidOperationException($"Pin stroke fragment {index} did not match the expected segment.");
+            }
+        }
+    }
+
+    private static void VerifyStaticPinBorderStyles()
+    {
+        var idle = StaticPinWindow.ResolveBorderStyle(hovered: false, dragging: false, resizing: false, drawing: false);
+        if (idle.Width != 1 || idle.Color != System.Drawing.Color.FromArgb(255, 128, 128, 128))
+        {
+            throw new InvalidOperationException("Idle static pin did not use a neutral 1px border.");
+        }
+
+        foreach (var style in new[]
+        {
+            StaticPinWindow.ResolveBorderStyle(hovered: true, dragging: false, resizing: false, drawing: false),
+            StaticPinWindow.ResolveBorderStyle(hovered: false, dragging: true, resizing: false, drawing: false),
+            StaticPinWindow.ResolveBorderStyle(hovered: false, dragging: false, resizing: true, drawing: false),
+            StaticPinWindow.ResolveBorderStyle(hovered: false, dragging: false, resizing: false, drawing: true),
+        })
+        {
+            if (style.Width != 2 || style.Color != System.Drawing.Color.FromArgb(255, 35, 211, 200))
+            {
+                throw new InvalidOperationException("An active static pin state did not use a cyan 2px border.");
+            }
         }
     }
 

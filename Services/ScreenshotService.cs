@@ -32,6 +32,17 @@ internal sealed class ScreenshotService
         }
     }
 
+    public async Task<BitmapSource> CaptureRegionImageAsync(ScreenRect rect, bool copyToClipboard)
+    {
+        var capture = await Task.Run(() => CaptureRegionCore(rect, saveToFile: false));
+        if (copyToClipboard)
+        {
+            await TrySetClipboardImageAsync(capture.Image);
+        }
+
+        return capture.Image;
+    }
+
     public ScreenRect GetCurrentMonitorBounds()
     {
         var bounds = GetCursorScreen().Bounds;
@@ -59,6 +70,8 @@ internal sealed class ScreenshotService
         }
     }
 
+    public Task CopyImageAsync(BitmapSource image) => TrySetClipboardImageAsync(image);
+
     private static ScreenshotCapture CaptureCurrentMonitorCore()
     {
         var screen = GetCursorScreen();
@@ -68,12 +81,15 @@ internal sealed class ScreenshotService
         return new ScreenshotCapture(image);
     }
 
-    private static ScreenshotCapture CaptureRegionCore(ScreenRect rect)
+    private static ScreenshotCapture CaptureRegionCore(ScreenRect rect, bool saveToFile = true)
     {
         var bounds = ToIntegerBounds(rect);
         using var bitmap = CaptureScreenBitmap(bounds);
         var image = ToBitmapSource(bitmap);
-        SavePng(bitmap, "FocusTool_Region");
+        if (saveToFile)
+        {
+            SavePng(bitmap, "FocusTool_Region");
+        }
         return new ScreenshotCapture(image);
     }
 

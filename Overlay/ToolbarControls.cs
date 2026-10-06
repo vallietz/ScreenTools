@@ -23,6 +23,7 @@ internal sealed class ToolbarControls
     public WpfButton SpotButton = null!;
     public WpfButton ZoomButton = null!;
     public WpfButton PinButton = null!;
+    public WpfButton StaticPinButton = null!;
     public WpfButton MaskButton = null!;
     public WpfButton BoardButton = null!;
     public WpfButton TimerButton = null!;

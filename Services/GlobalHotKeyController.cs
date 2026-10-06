@@ -8,12 +8,14 @@ internal sealed class GlobalHotKeyController : IDisposable
     private readonly Action<string, string> _showMessage;
     private readonly Action _toggleLaserActivation;
     private readonly Action _toggleAnnotate;
+    private readonly Action _clearAnnotations;
     private readonly Action _startPushToAnnotate;
     private readonly Action _toggleCursorHighlight;
     private readonly Action _toggleClickPulse;
     private readonly Action _toggleSpotlight;
     private readonly Action _toggleMagnifier;
     private readonly Action _togglePinnedLens;
+    private readonly Action _newStaticPin;
     private readonly Action _toggleRegionMask;
     private readonly Action _clearRegionMasks;
     private readonly Action _toggleRegionSpotlight;
@@ -34,12 +36,14 @@ internal sealed class GlobalHotKeyController : IDisposable
         Action<string, string> showMessage,
         Action toggleLaserActivation,
         Action toggleAnnotate,
+        Action clearAnnotations,
         Action startPushToAnnotate,
         Action toggleCursorHighlight,
         Action toggleClickPulse,
         Action toggleSpotlight,
         Action toggleMagnifier,
         Action togglePinnedLens,
+        Action newStaticPin,
         Action toggleRegionMask,
         Action clearRegionMasks,
         Action toggleRegionSpotlight,
@@ -58,12 +62,14 @@ internal sealed class GlobalHotKeyController : IDisposable
         _showMessage = showMessage;
         _toggleLaserActivation = toggleLaserActivation;
         _toggleAnnotate = toggleAnnotate;
+        _clearAnnotations = clearAnnotations;
         _startPushToAnnotate = startPushToAnnotate;
         _toggleCursorHighlight = toggleCursorHighlight;
         _toggleClickPulse = toggleClickPulse;
         _toggleSpotlight = toggleSpotlight;
         _toggleMagnifier = toggleMagnifier;
         _togglePinnedLens = togglePinnedLens;
+        _newStaticPin = newStaticPin;
         _toggleRegionMask = toggleRegionMask;
         _clearRegionMasks = clearRegionMasks;
         _toggleRegionSpotlight = toggleRegionSpotlight;
@@ -85,12 +91,14 @@ internal sealed class GlobalHotKeyController : IDisposable
         var registrations = new List<HotKeyRegistration>();
         AddIfEnabled(registrations, shortcuts.ToggleLaserActivation, _toggleLaserActivation);
         AddIfEnabled(registrations, shortcuts.ToggleAnnotate, _toggleAnnotate);
+        AddIfEnabled(registrations, "Alt+Shift+E", _clearAnnotations);
         AddIfEnabled(registrations, shortcuts.PushToAnnotate, _startPushToAnnotate);
         AddIfEnabled(registrations, shortcuts.ToggleCursorHighlight, _toggleCursorHighlight);
         AddIfEnabled(registrations, shortcuts.ToggleClickPulse, _toggleClickPulse);
         AddIfEnabled(registrations, shortcuts.ToggleSpotlight, _toggleSpotlight);
         AddIfEnabled(registrations, shortcuts.ToggleMagnifier, _toggleMagnifier);
         AddIfEnabled(registrations, shortcuts.TogglePinnedLens, _togglePinnedLens);
+        AddIfEnabled(registrations, shortcuts.NewStaticPin, _newStaticPin);
         AddIfEnabled(registrations, shortcuts.ToggleRegionMask, _toggleRegionMask);
         AddIfEnabled(registrations, shortcuts.ClearRegionMasks, _clearRegionMasks);
         AddIfEnabled(registrations, shortcuts.ToggleRegionSpotlight, _toggleRegionSpotlight);
@@ -129,6 +137,7 @@ internal sealed class GlobalHotKeyController : IDisposable
             && string.Equals(left.ToggleSpotlight, right.ToggleSpotlight, StringComparison.Ordinal)
             && string.Equals(left.ToggleMagnifier, right.ToggleMagnifier, StringComparison.Ordinal)
             && string.Equals(left.TogglePinnedLens, right.TogglePinnedLens, StringComparison.Ordinal)
+            && string.Equals(left.NewStaticPin, right.NewStaticPin, StringComparison.Ordinal)
             && string.Equals(left.ToggleRegionMask, right.ToggleRegionMask, StringComparison.Ordinal)
             && string.Equals(left.ClearRegionMasks, right.ClearRegionMasks, StringComparison.Ordinal)
             && string.Equals(left.ToggleRegionSpotlight, right.ToggleRegionSpotlight, StringComparison.Ordinal)

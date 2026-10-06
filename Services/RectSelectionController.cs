@@ -53,6 +53,7 @@ internal sealed class RectSelectionController
 
     public void BeginScreenshotMode()
     {
+        QuickEditInkStore.Reset();
         _pendingScreenshotRegion = null;
         _screenshotRegionToolbarRestorePending = false;
         _screenshotEdit.Cancel();
@@ -183,6 +184,7 @@ internal sealed class RectSelectionController
 
     public void ResetScreenshotRegionEditState(bool restoreToolbar)
     {
+        QuickEditInkStore.Reset();
         _pendingScreenshotRegion = null;
         _screenshotEdit.Cancel();
         if (restoreToolbar)
@@ -259,6 +261,7 @@ internal sealed class RectSelectionController
     private static bool IsRectSelectionMode(InteractionMode mode)
     {
         return mode is InteractionMode.PinnedLensSelect
+            or InteractionMode.StaticPinSelect
             or InteractionMode.RegionMaskSelect
             or InteractionMode.ScreenshotRegionSelect
             or InteractionMode.RegionSpotlightSelect;

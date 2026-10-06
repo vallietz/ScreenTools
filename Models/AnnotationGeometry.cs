@@ -18,7 +18,11 @@ internal static class AnnotationGeometry
     {
         if (shape.Tool is AnnotationTool.Line or AnnotationTool.Arrow)
         {
-            if (handle == AnnotationEditHandle.Start)
+            if (shape.Tool == AnnotationTool.Arrow && handle is AnnotationEditHandle.Control1 or AnnotationEditHandle.Control2)
+            {
+                shape.SetArrowControl(handle == AnnotationEditHandle.Control1 ? 1 : 2, point);
+            }
+            else if (handle == AnnotationEditHandle.Start)
             {
                 var nextStart = shift ? ApplyConstraint(AnnotationTool.Line, shape.End, point, shift: true) : point;
                 shape.SetEndpoints(nextStart, shape.End);

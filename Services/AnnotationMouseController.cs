@@ -43,6 +43,7 @@ internal sealed class AnnotationMouseController
     }
 
     public bool HasActiveOperation => _drawing || _movingSelection || _draggingAnnotationEditHandle;
+    public bool IsMovingSelection => _movingSelection;
 
     public void UpdateHighlighterHold()
     {
@@ -343,9 +344,10 @@ internal sealed class AnnotationMouseController
 
             if (!_annotations.ObjectEditContains(point))
             {
+                var wasArrow = _annotations.ObjectEditShape?.Tool == AnnotationTool.Arrow;
                 _annotations.EndObjectEdit();
                 ResetObjectClickTracking();
-                return true;
+                return !wasArrow || currentTool == AnnotationTool.Move;
             }
 
             if (_annotations.BeginSelectionMove(point))

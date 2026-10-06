@@ -26,6 +26,8 @@ internal sealed class TrayIconController : IDisposable
     private readonly ToolStripMenuItem _magnifierItem;
     private readonly ToolStripMenuItem _pinnedLensItem;
     private readonly ToolStripMenuItem _closePinnedLensesItem;
+    private readonly ToolStripMenuItem _staticPinItem;
+    private readonly ToolStripMenuItem _closeStaticPinsItem;
     private readonly ToolStripMenuItem _regionMaskItem;
     private readonly ToolStripMenuItem _clearRegionMasksItem;
     private readonly ToolStripMenuItem _fadingAnnotationsItem;
@@ -72,6 +74,8 @@ internal sealed class TrayIconController : IDisposable
         _magnifierItem = menuItems.MagnifierItem;
         _pinnedLensItem = menuItems.PinnedLensItem;
         _closePinnedLensesItem = menuItems.ClosePinnedLensesItem;
+        _staticPinItem = menuItems.StaticPinItem;
+        _closeStaticPinsItem = menuItems.CloseStaticPinsItem;
         _regionMaskItem = menuItems.RegionMaskItem;
         _clearRegionMasksItem = menuItems.ClearRegionMasksItem;
         _fadingAnnotationsItem = menuItems.FadingAnnotationsItem;
@@ -139,6 +143,7 @@ internal sealed class TrayIconController : IDisposable
         {
             InteractionMode.Annotate => "Mode: Annotate",
             InteractionMode.PinnedLensSelect => "Mode: Select pin area",
+            InteractionMode.StaticPinSelect => "Mode: Select static pin area",
             InteractionMode.RegionMaskSelect => "Mode: Select mask areas",
             InteractionMode.ScreenshotRegionSelect => "Mode: Select region screenshot",
             InteractionMode.RegionSpotlightSelect => "Mode: Select region spotlight",
@@ -191,6 +196,10 @@ internal sealed class TrayIconController : IDisposable
                 : "New pinned lens";
         _pinnedLensItem.ShortcutKeyDisplayString = _controller.PinnedLensShortcut;
         _closePinnedLensesItem.Enabled = _controller.PinnedLensActive;
+        _staticPinItem.Text = _controller.StaticPinSelectionActive ? "New Pin: select area" : _controller.StaticPinCount > 0 ? $"New Pin ({_controller.StaticPinCount} active)" : "New Pin";
+        _staticPinItem.Checked = _controller.StaticPinSelectionActive;
+        _staticPinItem.ShortcutKeyDisplayString = _controller.Settings.Shortcuts.NewStaticPin;
+        _closeStaticPinsItem.Enabled = _controller.StaticPinActive;
 
         _regionMaskItem.Checked = _controller.RegionMaskActive || _controller.RegionMaskSelectionActive;
         _regionMaskItem.Text = _controller.RegionMaskSelectionActive

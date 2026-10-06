@@ -326,6 +326,7 @@ internal sealed class OverlayToolbarWindow : Window
             ToolbarStyles.SetButtonActive(_controls.SpotButton, _controller.SpotlightEnabled || _controller.RegionSpotlightActive || _controller.RegionSpotlightSelectionActive);
             ToolbarStyles.SetButtonActive(_controls.ZoomButton, _controller.MagnifierEnabled || _controller.PinnedLensSelectionActive || _controller.PinnedLensActive);
             ToolbarStyles.SetButtonActive(_controls.PinButton, _controller.PinnedLensSelectionActive || _controller.PinnedLensActive);
+            ToolbarStyles.SetButtonActive(_controls.StaticPinButton, _controller.StaticPinSelectionActive || _controller.StaticPinActive);
             ToolbarStyles.SetButtonActive(_controls.MaskButton, _controller.RegionMaskSelectionActive || _controller.RegionMaskActive);
             ToolbarStyles.SetButtonActive(_controls.BoardButton, _controller.Mode is InteractionMode.ScreenBoard or InteractionMode.BlackScreen or InteractionMode.WhiteScreen);
 

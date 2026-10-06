@@ -8,5 +8,7 @@ internal enum AnnotationEditHandle
     BottomLeft,
     BottomRight,
     Start,
-    End
+    End,
+    Control1,
+    Control2
 }

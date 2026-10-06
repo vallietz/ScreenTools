@@ -15,6 +15,7 @@ internal sealed class OverlayWindow : Window
 {
     private readonly Screen _screen;
     private readonly IOverlayInputHandler _inputHandler;
+    private readonly Func<RectOverlayVisual?> _rectOverlayProvider;
     private readonly OverlaySurface _surface;
     private HwndSource? _source;
     private bool _annotateInputEnabled;
@@ -42,6 +43,7 @@ internal sealed class OverlayWindow : Window
     {
         _screen = screen;
         _inputHandler = inputHandler;
+        _rectOverlayProvider = rectOverlayProvider;
         var bounds = screen.Bounds;
         _surface = new OverlaySurface(
             trailModel,
@@ -123,6 +125,15 @@ internal sealed class OverlayWindow : Window
     }
 
     public IntPtr Handle => new WindowInteropHelper(this).Handle;
+
+    /// <summary>Continues an annotation gesture that started in a Pin window.</summary>
+    public bool TryCaptureExternalAnnotationGesture()
+    {
+        if (!_annotateInputEnabled || Handle == IntPtr.Zero) return false;
+        _nativeMouseCaptured = true;
+        NativeMethods.SetCapture(Handle);
+        return true;
+    }
 
     public bool Contains(ScreenPoint point)
     {
@@ -220,7 +231,7 @@ internal sealed class OverlayWindow : Window
 
         Focusable = _annotateInputEnabled;
         IsHitTestVisible = _annotateInputEnabled;
-        Cursor = _annotateInputEnabled ? WpfCursors.Cross : WpfCursors.Arrow;
+        RefreshAnnotationCursor();
         _surface.SetAnnotationInputEnabled(_annotateInputEnabled);
 
         if (_sourceReady)
@@ -229,6 +240,17 @@ internal sealed class OverlayWindow : Window
         }
 
         _surface.InvalidateVisual();
+    }
+
+    public void RefreshAnnotationCursor()
+    {
+        if (_inputHandler.Mode == InteractionMode.ScreenshotRegionSelect)
+        {
+            Cursor = AnnotationCursor.ForQuickEditSelection(_rectOverlayProvider());
+            return;
+        }
+
+        Cursor = AnnotationCursor.ForOverlay(_inputHandler.Mode, _annotateInputEnabled, _inputHandler.CurrentTool, _inputHandler.IsMoveDragging, _inputHandler.HasMoveSelection);
     }
 
     public void ActivateKeyboardInput()
@@ -396,6 +418,7 @@ internal sealed class OverlayWindow : Window
     {
         return mode is InteractionMode.Annotate
             or InteractionMode.PinnedLensSelect
+            or InteractionMode.StaticPinSelect
             or InteractionMode.RegionMaskSelect
             or InteractionMode.ScreenshotRegionSelect
             or InteractionMode.RegionSpotlightSelect

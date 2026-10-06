@@ -13,6 +13,8 @@ internal sealed class AnnotationShape
     public AnnotationTool Tool { get; set; }
     public ScreenPoint Start { get; set; }
     public ScreenPoint End { get; set; }
+    public ScreenPoint? ArrowControl1 { get; private set; }
+    public ScreenPoint? ArrowControl2 { get; private set; }
     public List<ScreenPoint> Points { get; set; } = [];
     public string Color { get; set; } = "#FFFF2020";
     public double Thickness { get; set; } = 4;
@@ -34,6 +36,8 @@ internal sealed class AnnotationShape
             Tool = Tool,
             Start = Start,
             End = End,
+            ArrowControl1 = ArrowControl1,
+            ArrowControl2 = ArrowControl2,
             Points = [.. Points],
             Color = Color,
             Thickness = Thickness,
@@ -106,6 +110,7 @@ internal sealed class AnnotationShape
     {
         var bounds = Tool switch
         {
+            AnnotationTool.Arrow => ArrowBounds(),
             AnnotationTool.Highlighter when HighlighterStraightened => ScreenRect.FromPoints(Start, End),
             AnnotationTool.Pencil or AnnotationTool.Highlighter when Points.Count > 0 => BoundsFromPoints(Points),
             AnnotationTool.Text => TextBounds(),
@@ -132,7 +137,7 @@ internal sealed class AnnotationShape
         return Tool switch
         {
             AnnotationTool.Line => SegmentIntersectsRect(Start, End, selection.Inflate(StrokePadding())),
-            AnnotationTool.Arrow => SegmentIntersectsRect(Start, End, selection.Inflate(Math.Max(6, Thickness * 3))),
+            AnnotationTool.Arrow => ArrowIntersects(selection.Inflate(Math.Max(6, Thickness * 3))),
             AnnotationTool.Rectangle => RectangleOutlineIntersects(selection),
             AnnotationTool.Ellipse => EllipseOutlineIntersects(selection),
             AnnotationTool.Highlighter when HighlighterStraightened => SegmentIntersectsRect(Start, End, selection.Inflate(StrokePadding())),
@@ -147,6 +152,8 @@ internal sealed class AnnotationShape
     {
         Start = Start.Offset(dx, dy);
         End = End.Offset(dx, dy);
+        if (ArrowControl1 is { } first) ArrowControl1 = first.Offset(dx, dy);
+        if (ArrowControl2 is { } second) ArrowControl2 = second.Offset(dx, dy);
 
         for (var i = 0; i < Points.Count; i++)
         {
@@ -161,6 +168,38 @@ internal sealed class AnnotationShape
         Start = start;
         End = end;
         GeometryVersion++;
+    }
+
+    public (ScreenPoint First, ScreenPoint Second) GetArrowControls()
+    {
+        var (first, second) = CurvedArrowGeometry.DefaultControls(Start, End);
+        return (ArrowControl1 ?? first, ArrowControl2 ?? second);
+    }
+
+    public void SetArrowControl(int index, ScreenPoint point)
+    {
+        if (index == 1) ArrowControl1 = point;
+        else if (index == 2) ArrowControl2 = point;
+        else throw new ArgumentOutOfRangeException(nameof(index));
+        GeometryVersion++;
+    }
+
+    private ScreenRect ArrowBounds()
+    {
+        var (first, second) = GetArrowControls();
+        var samples = CurvedArrowGeometry.Sample(Start, first, second, End);
+        return BoundsFromPoints(samples);
+    }
+
+    private bool ArrowIntersects(ScreenRect selection)
+    {
+        var (first, second) = GetArrowControls();
+        var samples = CurvedArrowGeometry.Sample(Start, first, second, End, 48);
+        for (var index = 1; index < samples.Count; index++)
+        {
+            if (SegmentIntersectsRect(samples[index - 1], samples[index], selection)) return true;
+        }
+        return false;
     }
 
     public void StraightenHighlighter(ScreenPoint endpoint)
