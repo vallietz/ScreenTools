@@ -203,15 +203,15 @@ internal static class Program
         document.CommitTemporaryLaserPencil();
         nowMs += 6000;
         var fadingStroke = document.TemporaryLaserStrokes.Single();
-        if (fadingStroke.GetTemporaryTailStartIndex(nowMs) != 0)
+        if (fadingStroke.GetTemporaryTailFadeProgress(nowMs) != 0)
         {
             throw new InvalidOperationException("Laser pencil must keep its complete path before fade-out begins.");
         }
 
         nowMs += 500;
-        if (fadingStroke.GetTemporaryTailStartIndex(nowMs) is not 1)
+        if (Math.Abs(fadingStroke.GetTemporaryTailFadeProgress(nowMs) - 0.5) > 0.001)
         {
-            throw new InvalidOperationException("Laser pencil must erase from the oldest tail points first.");
+            throw new InvalidOperationException("Laser pencil tail must dissolve progressively after fade-out begins.");
         }
 
     }

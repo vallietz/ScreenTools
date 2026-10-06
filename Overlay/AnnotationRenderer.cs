@@ -319,30 +319,46 @@ internal sealed class AnnotationRenderer
 
     private void DrawTemporaryLaserPencil(DrawingContext drawingContext, AnnotationShape shape, double nowMs)
     {
-        var startIndex = shape.GetTemporaryTailStartIndex(nowMs);
-        if (startIndex >= shape.Points.Count)
+        if (shape.Points.Count == 0)
         {
             return;
         }
 
-        var visible = shape.Clone();
-        visible.Points = [.. shape.Points.Skip(startIndex)];
-        var color = AppSettings.TryParseColor(visible.Color, out var parsedColor)
+        var color = AppSettings.TryParseColor(shape.Color, out var parsedColor)
             ? parsedColor
             : Colors.Red;
-        var pen = _createPen(color, 0.95, visible.Thickness);
-
-        if (visible.Points.Count == 1)
+        if (shape.Points.Count == 1)
         {
-            var center = _toLocal(visible.Points[0]);
+            var pen = _createPen(color, 0.95 * (1 - shape.GetTemporaryTailFadeProgress(nowMs)), shape.Thickness);
+            var center = _toLocal(shape.Points[0]);
             drawingContext.DrawEllipse(pen.Brush, null, center, pen.Thickness / 2, pen.Thickness / 2);
             return;
         }
 
-        drawingContext.DrawGeometry(
-            null,
-            pen,
-            BuildStrokeGeometry(visible, StrokeSmoothingLevel.Balanced, finalize: false));
+        var points = AnnotationStrokeGeometry.Smooth(shape.Points, StrokeSmoothingLevel.Balanced, finalize: false);
+        var fadeProgress = shape.GetTemporaryTailFadeProgress(nowMs);
+        if (fadeProgress <= 0)
+        {
+            drawingContext.DrawGeometry(null, _createPen(color, 0.95, shape.Thickness), BuildStrokeGeometry(shape, StrokeSmoothingLevel.Balanced, finalize: false));
+            return;
+        }
+
+        const double fadeEdge = 0.18;
+        var segmentCount = points.Count - 1;
+        for (var index = 1; index < points.Count; index++)
+        {
+            var position = index / (double)segmentCount;
+            var opacity = Math.Clamp((position - fadeProgress) / fadeEdge, 0, 1);
+            if (opacity <= 0.001)
+            {
+                continue;
+            }
+
+            drawingContext.DrawLine(
+                _createPen(color, 0.95 * opacity, shape.Thickness),
+                _toLocal(points[index - 1]),
+                _toLocal(points[index]));
+        }
     }
 
     private Geometry GetStrokeGeometry(AnnotationShape shape)
