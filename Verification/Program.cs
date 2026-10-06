@@ -746,9 +746,9 @@ internal static class Program
 
         var tailOpacity = AnnotationRenderer.GetTailDissolveOpacity(segmentIndex: 1, segmentCount: 20, fadeProgress: 0.5);
         var headOpacity = AnnotationRenderer.GetTailDissolveOpacity(segmentIndex: 19, segmentCount: 20, fadeProgress: 0.5);
-        if (tailOpacity >= headOpacity || tailOpacity <= 0)
+        if (tailOpacity >= headOpacity || tailOpacity is < 0.35 or > 0.65)
         {
-            throw new InvalidOperationException("Laser trace must dissolve its tail progressively without moving the path.");
+            throw new InvalidOperationException("Laser trace tail must dissolve continuously without stepping between segments.");
         }
     }
 

@@ -403,9 +403,8 @@ internal sealed class AnnotationRenderer
         }
 
         var position = Math.Clamp((segmentIndex + 1) / (double)segmentCount, 0, 1);
-        var noise = ((uint)(segmentIndex * 1_103_515_245 + 12_345) & 0x7fff_ffff) / (double)int.MaxValue;
-        var delay = position * 0.48 + noise * 0.16;
-        var dissolve = Math.Clamp((fadeProgress - delay) / 0.52, 0, 1);
+        var dissolve = fadeProgress * (1 - position)
+            + Math.Pow(fadeProgress, 4) * position;
         return 1 - SmoothStep(dissolve);
     }
 
