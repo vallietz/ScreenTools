@@ -28,14 +28,51 @@ internal static class AnnotationCursor
 
     public static FormsCursor DraggingHandForPin => FastStoneClosedHandForPin.Value;
 
-    public static WpfCursor ForQuickEditSelection(RectOverlayVisual? selection)
+    public static WpfCursor ForQuickEditSelection(RectOverlayVisual? selection, ScreenPoint? pointer = null)
         => selection is not { IsDraft: false } ? WpfCursors.Cross
             : QuickEditInkStore.IsStrokeDragging ? FastStoneClosedHandForOverlay.Value
             : QuickEditInkStore.IsArrowControlDragging || QuickEditInkStore.IsResizeDragging || QuickEditInkStore.IsCalloutPointerDragging ? WpfCursors.SizeAll
+            : pointer is { } point && TryQuickEditHoverCursor(selection.Value, point) is { } hover ? hover
             : QuickEditInkStore.Tool is QuickEditTool.Pencil or QuickEditTool.Highlighter ? FastStonePenForOverlay.Value
             : QuickEditInkStore.Tool == QuickEditTool.StepBadge ? WpfCursors.Hand
             : QuickEditInkStore.Tool is QuickEditTool.Line or QuickEditTool.Arrow or QuickEditTool.Rectangle or QuickEditTool.Ellipse or QuickEditTool.Mosaic ? WpfCursors.Cross
             : WpfCursors.IBeam;
+
+    private static WpfCursor? TryQuickEditHoverCursor(RectOverlayVisual selection, ScreenPoint point)
+    {
+        if (QuickEditPalette.TryHit(selection.Rect, point, out _)) return WpfCursors.Hand;
+        if (QuickEditInkStore.SelectedCallout is { } callout)
+        {
+            for (var tail = 0; tail < 2; tail++)
+            {
+                var tip = tail == 0 ? callout.CalloutTarget : callout.CalloutTarget2;
+                if (tip?.DistanceTo(point) <= 10) return WpfCursors.SizeAll;
+                if (tip is null && callout.GetCalloutBase(tail).DistanceTo(point) <= 10) return WpfCursors.SizeAll;
+                if (tip is not null)
+                {
+                    var (first, second) = QuickEditCalloutGeometry.TailBaseEndpoints(callout, tail);
+                    if (first.DistanceTo(point) <= 10 || second.DistanceTo(point) <= 10) return WpfCursors.SizeAll;
+                }
+            }
+            var handles = callout.GetResizeHandles();
+            for (var index = 0; index < handles.Length; index++)
+            {
+                if (handles[index].DistanceTo(point) > 10) continue;
+                return index switch
+                {
+                    0 or 4 => WpfCursors.SizeNWSE,
+                    2 or 6 => WpfCursors.SizeNESW,
+                    1 or 5 => WpfCursors.SizeNS,
+                    _ => WpfCursors.SizeWE,
+                };
+            }
+            var origin = callout.Points[0];
+            if (point.X >= origin.X && point.X <= origin.X + callout.CalloutWidth
+                && point.Y >= origin.Y && point.Y <= origin.Y + callout.CalloutHeight)
+                return WpfCursors.IBeam;
+        }
+        return null;
+    }
 
     public static WpfCursor ForOverlay(InteractionMode mode, bool annotationInputEnabled, AnnotationTool tool, bool isMoveDragging, bool hasMoveSelection)
         => mode == InteractionMode.StaticPinSelect ? WpfCursors.Cross

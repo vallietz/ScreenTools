@@ -5,6 +5,9 @@ using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using FocusTool.Win.Models;
 using FocusTool.Win.Native;
+using FocusTool.Win.Services;
+using System.Windows.Controls;
+using WpfTextBox = System.Windows.Controls.TextBox;
 using Screen = System.Windows.Forms.Screen;
 using WpfCursors = System.Windows.Input.Cursors;
 using WpfKeyEventArgs = System.Windows.Input.KeyEventArgs;
@@ -17,11 +20,15 @@ internal sealed class OverlayWindow : Window
     private readonly IOverlayInputHandler _inputHandler;
     private readonly Func<RectOverlayVisual?> _rectOverlayProvider;
     private readonly OverlaySurface _surface;
+    private readonly Canvas _editorLayer = new();
+    private WpfTextBox? _textEditor;
+    private QuickEditStroke? _editingCallout;
     private HwndSource? _source;
     private bool _annotateInputEnabled;
     private bool _applyingBounds;
     private bool _nativeMouseCaptured;
     private bool _sourceReady;
+    private ScreenPoint? _quickEditHoverPoint;
 
     public OverlayWindow(
         Screen screen,
@@ -63,7 +70,10 @@ internal sealed class OverlayWindow : Window
             new ScreenRect(bounds.Left, bounds.Top, bounds.Right, bounds.Bottom));
 
         Title = "FocusTool";
-        Content = _surface;
+        var content = new Grid();
+        content.Children.Add(_surface);
+        content.Children.Add(_editorLayer);
+        Content = content;
         AllowsTransparency = true;
         Background = System.Windows.Media.Brushes.Transparent;
         WindowStyle = WindowStyle.None;
@@ -99,6 +109,7 @@ internal sealed class OverlayWindow : Window
     {
         base.OnDpiChanged(oldDpi, newDpi);
         PositionOverScreen();
+        SyncTextEditor();
 
         // WPF can rebuild the layered surface on a DPI change and drop the manually
         // applied click-through styles, which would silently make an annotation
@@ -233,6 +244,7 @@ internal sealed class OverlayWindow : Window
         IsHitTestVisible = _annotateInputEnabled;
         RefreshAnnotationCursor();
         _surface.SetAnnotationInputEnabled(_annotateInputEnabled);
+        SyncTextEditor();
 
         if (_sourceReady)
         {
@@ -246,7 +258,7 @@ internal sealed class OverlayWindow : Window
     {
         if (_inputHandler.Mode == InteractionMode.ScreenshotRegionSelect)
         {
-            Cursor = AnnotationCursor.ForQuickEditSelection(_rectOverlayProvider());
+            Cursor = AnnotationCursor.ForQuickEditSelection(_rectOverlayProvider(), _quickEditHoverPoint);
             return;
         }
 
@@ -274,6 +286,11 @@ internal sealed class OverlayWindow : Window
         }
 
         Activate();
+        if (_textEditor is { Visibility: Visibility.Visible })
+        {
+            Keyboard.Focus(_textEditor);
+            return;
+        }
         Focus();
         _surface.Focus();
         Keyboard.Focus(_surface);
@@ -281,7 +298,68 @@ internal sealed class OverlayWindow : Window
 
     public void Refresh()
     {
+        SyncTextEditor();
         _surface.InvalidateVisual();
+    }
+
+    private void SyncTextEditor()
+    {
+        var active = _inputHandler.Mode == InteractionMode.ScreenshotRegionSelect
+            ? QuickEditInkStore.ActiveText : null;
+        if (active is null || active.Points.Count == 0)
+        {
+            if (_textEditor is not null) _textEditor.Visibility = Visibility.Collapsed;
+            _editingCallout = null;
+            return;
+        }
+
+        var topLeft = _surface.PointFromScreen(new System.Windows.Point(active.Points[0].X, active.Points[0].Y));
+        var bottomRight = _surface.PointFromScreen(new System.Windows.Point(
+            active.Points[0].X + active.CalloutWidth, active.Points[0].Y + active.CalloutHeight));
+        var visible = bottomRight.X > 0 && bottomRight.Y > 0
+            && topLeft.X < _surface.ActualWidth && topLeft.Y < _surface.ActualHeight;
+        if (!visible)
+        {
+            if (_textEditor is not null) _textEditor.Visibility = Visibility.Collapsed;
+            return;
+        }
+
+        if (_textEditor is null)
+        {
+            _textEditor = new WpfTextBox
+            {
+                FontFamily = new System.Windows.Media.FontFamily("Segoe UI"), FontSize = 18,
+                FontWeight = FontWeights.Bold, Foreground = System.Windows.Media.Brushes.Black,
+                Background = System.Windows.Media.Brushes.Transparent, BorderThickness = new Thickness(0),
+                TextAlignment = TextAlignment.Center, TextWrapping = TextWrapping.Wrap,
+                AcceptsReturn = true, VerticalContentAlignment = VerticalAlignment.Center,
+                VerticalScrollBarVisibility = ScrollBarVisibility.Auto,
+                Padding = new Thickness(0), Cursor = WpfCursors.IBeam,
+            };
+            System.Windows.Automation.AutomationProperties.SetAutomationId(_textEditor, "QuickEditCalloutTextEditor");
+            _textEditor.TextChanged += (_, _) =>
+            {
+                QuickEditInkStore.ReplaceActiveText(_textEditor.Text);
+                SyncTextEditor();
+                _surface.InvalidateVisual();
+            };
+            _editorLayer.Children.Add(_textEditor);
+        }
+        var firstActivation = !ReferenceEquals(_editingCallout, active);
+        _editingCallout = active;
+        _textEditor.Visibility = Visibility.Visible;
+        Canvas.SetLeft(_textEditor, topLeft.X + 10);
+        Canvas.SetTop(_textEditor, topLeft.Y + 5);
+        _textEditor.Width = Math.Max(1, bottomRight.X - topLeft.X - 20);
+        _textEditor.Height = Math.Max(1, bottomRight.Y - topLeft.Y - 10);
+        if (firstActivation)
+        {
+            _textEditor.Text = active.Text ?? string.Empty;
+            _textEditor.CaretIndex = _textEditor.Text.Length;
+            _textEditor.ScrollToEnd();
+            Activate();
+            Keyboard.Focus(_textEditor);
+        }
     }
 
     public BitmapSource? CaptureSurface()
@@ -462,6 +540,18 @@ internal sealed class OverlayWindow : Window
                 ? e.ImeProcessedKey
                 : e.Key;
 
+        if (_textEditor is { IsKeyboardFocusWithin: true } && QuickEditInkStore.ActiveText is not null)
+        {
+            if (key == Key.Escape)
+            {
+                QuickEditInkStore.CancelText();
+                Refresh();
+                FocusKeyboardInputCore();
+                e.Handled = true;
+            }
+            return;
+        }
+
         e.Handled = _inputHandler.HandleOverlayKeyDown(key, Keyboard.Modifiers);
     }
 
@@ -471,6 +561,9 @@ internal sealed class OverlayWindow : Window
         {
             return;
         }
+
+        if (_textEditor is { IsKeyboardFocusWithin: true } && QuickEditInkStore.ActiveText is not null)
+            return;
 
         _inputHandler.HandleOverlayTextInput(e.Text);
         e.Handled = true;
@@ -483,15 +576,30 @@ internal sealed class OverlayWindow : Window
             return IntPtr.Zero;
         }
 
+        // Let WPF's TextBox own mouse selection and caret positioning within its bounds.
+        if (!_nativeMouseCaptured
+            && msg is (NativeMethods.WmLButtonDown or NativeMethods.WmLButtonDblClk
+                or NativeMethods.WmLButtonUp or NativeMethods.WmMouseMove)
+            && _textEditor is { Visibility: Visibility.Visible }
+            && QuickEditInkStore.ActiveText is not null
+            && IsOverTextEditor(ToScreenPoint(hwnd, lParam)))
+            return IntPtr.Zero;
+
         switch (msg)
         {
             case NativeMethods.WmLButtonDown:
+            case NativeMethods.WmLButtonDblClk:
                 _nativeMouseCaptured = true;
                 NativeMethods.SetCapture(hwnd);
                 _inputHandler.HandleOverlayMouseDown(ToScreenPoint(hwnd, lParam), MouseButton.Left, Keyboard.Modifiers);
                 handled = true;
                 break;
             case NativeMethods.WmMouseMove:
+                if (_inputHandler.Mode == InteractionMode.ScreenshotRegionSelect)
+                {
+                    _quickEditHoverPoint = ToScreenPoint(hwnd, lParam);
+                    RefreshAnnotationCursor();
+                }
                 if (_nativeMouseCaptured)
                 {
                     _inputHandler.HandleOverlayMouseMove(ToScreenPoint(hwnd, lParam), Keyboard.Modifiers);
@@ -534,6 +642,14 @@ internal sealed class OverlayWindow : Window
         }
 
         return IntPtr.Zero;
+    }
+
+    private bool IsOverTextEditor(ScreenPoint point)
+    {
+        if (_textEditor is null) return false;
+        var local = _surface.PointFromScreen(new System.Windows.Point(point.X, point.Y));
+        return local.X >= Canvas.GetLeft(_textEditor) && local.X <= Canvas.GetLeft(_textEditor) + _textEditor.Width
+            && local.Y >= Canvas.GetTop(_textEditor) && local.Y <= Canvas.GetTop(_textEditor) + _textEditor.Height;
     }
 
     private static int GetMouseWheelDelta(IntPtr wParam)

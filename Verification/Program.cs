@@ -1,3 +1,4 @@
+using System.IO;
 using System.Windows.Media;
 using System.Windows.Media.Imaging;
 using FocusTool.Win.Native;
@@ -17,6 +18,11 @@ internal static class Program
             if (args.Contains("--benchmark-highlighter", StringComparer.OrdinalIgnoreCase))
             {
                 RunHighlighterBenchmark();
+                return 0;
+            }
+            if (args.Contains("--render-callout-reference", StringComparer.OrdinalIgnoreCase))
+            {
+                RenderCalloutReference();
                 return 0;
             }
 
@@ -52,6 +58,15 @@ internal static class Program
             VerifyStaticPinArrowControls();
             VerifyFineQuickEditMosaic();
             VerifyQuickEditTextCallout();
+            VerifyQuickEditTwoTailCallout();
+            VerifyQuickEditTwoTailExport();
+            VerifyQuickEditCalloutTailGeometry();
+            VerifyQuickEditCalloutReferenceGeometry();
+            VerifyQuickEditCalloutSeamlessExport();
+            VerifyQuickEditCalloutProjection();
+            VerifyQuickEditCalloutBaseEndpoints();
+            VerifyQuickEditDoubleClickReopensText();
+            VerifyQuickEditTextEditorSynchronization();
             VerifyQuickEditObjectEditingAndHistory();
             VerifyQuickEditEllipseHandlesOnContour();
             VerifyQuickEditStepBadges();
@@ -902,15 +917,293 @@ internal static class Program
         QuickEditInkStore.EndCalloutPointerDrag();
         if (callout.CalloutTarget != new ScreenPoint(120, 140))
             throw new InvalidOperationException("The callout pointer must follow its drag target.");
-        var white = Enumerable.Repeat((byte)255, 160 * 160 * 4).ToArray();
-        var image = BitmapSource.Create(160, 160, 96, 96, PixelFormats.Bgra32, null, white, 640);
-        var exported = QuickEditImageComposer.Compose(image, new ScreenRect(0, 0, 160, 160), [callout], null);
-        var output = new byte[white.Length];
-        exported.CopyPixels(output, 640, 0);
-        var pointerPixel = (100 * 160 + 100) * 4;
-        if (output[pointerPixel + 2] <= output[pointerPixel + 1])
-            throw new InvalidOperationException("A Quick Edit text callout pointer must be included in exported pixels.");
         QuickEditInkStore.Reset();
+    }
+
+    private static void VerifyQuickEditTwoTailCallout()
+    {
+        QuickEditInkStore.Reset();
+        QuickEditInkStore.AddText(new ScreenPoint(20, 30), "Текст");
+        var callout = QuickEditInkStore.Strokes.Single();
+        var firstBase = callout.GetCalloutBase(0);
+        var secondBase = callout.GetCalloutBase(1);
+        if (firstBase.Y != secondBase.Y || firstBase.X >= secondBase.X)
+            throw new InvalidOperationException("Both green callout handles must begin on the lower edge.");
+        if (!QuickEditInkStore.TryBeginCalloutPointerDrag(firstBase))
+            throw new InvalidOperationException("First tail handle cannot be dragged.");
+        QuickEditInkStore.UpdateCalloutPointerDrag(new ScreenPoint(55, 125));
+        QuickEditInkStore.EndCalloutPointerDrag();
+        if (callout.CalloutTarget != new ScreenPoint(55, 125) || callout.CalloutTarget2 is not null)
+            throw new InvalidOperationException("Dragging the first handle must create only the first tail.");
+        if (!QuickEditInkStore.TryBeginCalloutPointerDrag(secondBase))
+            throw new InvalidOperationException("Second tail handle cannot be dragged.");
+        QuickEditInkStore.UpdateCalloutPointerDrag(new ScreenPoint(135, 125));
+        QuickEditInkStore.EndCalloutPointerDrag();
+        if (callout.CalloutTarget != new ScreenPoint(55, 125) || callout.CalloutTarget2 != new ScreenPoint(135, 125))
+            throw new InvalidOperationException("Second tail must not move the first tail.");
+        if (!QuickEditInkStore.Undo() || QuickEditInkStore.Strokes.Single().CalloutTarget2 is not null)
+            throw new InvalidOperationException("Undo must remove only the second tail.");
+        if (!QuickEditInkStore.Redo())
+            throw new InvalidOperationException("Redo must restore the second tail.");
+        var restored = QuickEditInkStore.Strokes.Single();
+        if (!QuickEditInkStore.TryBeginStrokeDrag(new ScreenPoint(25, 35)))
+            throw new InvalidOperationException("Callout cannot be moved after editing tails.");
+        QuickEditInkStore.UpdateStrokeDrag(new ScreenPoint(35, 45));
+        QuickEditInkStore.EndStrokeDrag();
+        if (restored.CalloutTarget != new ScreenPoint(55, 125) || restored.CalloutTarget2 != new ScreenPoint(135, 125))
+            throw new InvalidOperationException("Moving the callout must keep both tail tips fixed on the image.");
+    }
+
+    private static void VerifyQuickEditTwoTailExport()
+    {
+        var white = Enumerable.Repeat((byte)255, 180 * 180 * 4).ToArray();
+        var source = BitmapSource.Create(180, 180, 96, 96, PixelFormats.Bgra32, null, white, 720);
+        var callout = new QuickEditStroke(QuickEditTool.Text, [new ScreenPoint(20, 20)])
+        {
+            Text = "Text",
+            CalloutTarget = new ScreenPoint(50, 130),
+            CalloutTarget2 = new ScreenPoint(130, 130),
+        };
+        var image = QuickEditImageComposer.Compose(source, new ScreenRect(0, 0, 180, 180), [callout], null);
+        var pixels = new byte[white.Length];
+        image.CopyPixels(pixels, 720, 0);
+        var leftYellow = 0;
+        var rightYellow = 0;
+        var red = 0;
+        var green = 0;
+        for (var y = 70; y <= 125; y++)
+        for (var x = 25; x <= 145; x++)
+        {
+            var offset = (y * 180 + x) * 4;
+            var b = pixels[offset]; var g = pixels[offset + 1]; var r = pixels[offset + 2];
+            if (r > 220 && g > 220 && b < 245)
+            {
+                if (x < 90) leftYellow++; else rightYellow++;
+            }
+            if (r > 180 && g < 80 && b < 80) red++;
+            if (g > 140 && r < 100 && b < 100) green++;
+        }
+        if (leftYellow < 20 || rightYellow < 20 || red != 0 || green != 0)
+            throw new InvalidOperationException("Export must contain two yellow triangular tails, no red arrow or green edit handles.");
+    }
+
+    private static void VerifyQuickEditCalloutTailGeometry()
+    {
+        var callout = new QuickEditStroke(QuickEditTool.Text, [new ScreenPoint(30, 20)]) { Text = "Text" };
+        var tip = new ScreenPoint(65, 120);
+        var triangle = QuickEditCalloutGeometry.TailTriangle(callout, 0, tip);
+        if (triangle.BaseLeft.Y != 20 + callout.CalloutHeight || triangle.BaseRight.Y != 20 + callout.CalloutHeight
+            || triangle.BaseRight.X - triangle.BaseLeft.X != 20
+            || triangle.Tip != tip)
+            throw new InvalidOperationException("A callout tail must be a wide triangle rooted on the lower edge.");
+        callout.CalloutBoxWidth = 540;
+        var expanded = QuickEditCalloutGeometry.TailTriangle(callout, 0, tip);
+        if (expanded.BaseRight.X - expanded.BaseLeft.X != 60 || expanded.Tip != tip)
+            throw new InvalidOperationException("Widening the callout must widen the tail base proportionally without moving its tip.");
+    }
+
+    private static void VerifyQuickEditCalloutBaseEndpoints()
+    {
+        QuickEditInkStore.Reset();
+        QuickEditInkStore.AddText(new ScreenPoint(30, 30), "Text");
+        var callout = QuickEditInkStore.Strokes.Single();
+        if (!QuickEditInkStore.TryBeginCalloutPointerDrag(callout.GetCalloutBase(0)))
+            throw new InvalidOperationException("Cannot create a tail from its initial green point.");
+        var tip = new ScreenPoint(130, 160);
+        QuickEditInkStore.UpdateCalloutPointerDrag(tip);
+        QuickEditInkStore.EndCalloutPointerDrag();
+        var original = QuickEditCalloutGeometry.TailTriangle(callout, 0, tip);
+        if (!QuickEditInkStore.TryBeginCalloutPointerDrag(original.BaseLeft))
+            throw new InvalidOperationException("The first base endpoint must be draggable.");
+        QuickEditInkStore.UpdateCalloutPointerDrag(original.BaseLeft.Offset(-30, 0));
+        QuickEditInkStore.EndCalloutPointerDrag();
+        var widened = QuickEditCalloutGeometry.TailTriangle(callout, 0, tip);
+        if (widened.BaseLeft.X != original.BaseLeft.X - 30 || widened.BaseRight != original.BaseRight
+            || callout.CalloutTarget != tip)
+            throw new InvalidOperationException("Dragging one green base endpoint must change only that side of the tail.");
+        if (!QuickEditInkStore.TryBeginCalloutPointerDrag(widened.BaseRight))
+            throw new InvalidOperationException("The second base endpoint must be draggable.");
+        QuickEditInkStore.UpdateCalloutPointerDrag(new ScreenPoint(120, 30));
+        QuickEditInkStore.EndCalloutPointerDrag();
+        var movedToTop = QuickEditCalloutGeometry.TailTriangle(callout, 0, tip);
+        if (movedToTop.BaseLeft != widened.BaseLeft || movedToTop.BaseRight != new ScreenPoint(120, 30)
+            || callout.CalloutTarget != tip)
+            throw new InvalidOperationException("Moving the second endpoint to the top edge must preserve the first endpoint and tip.");
+        if (!QuickEditInkStore.Undo())
+            throw new InvalidOperationException("Moving the second endpoint must be undoable.");
+        var afterOneUndo = QuickEditInkStore.Strokes.Single();
+        var priorShape = QuickEditCalloutGeometry.TailTriangle(afterOneUndo, 0, tip);
+        if (priorShape.BaseLeft != widened.BaseLeft || priorShape.BaseRight != original.BaseRight)
+            throw new InvalidOperationException("Undo must restore only the second endpoint.");
+        if (!QuickEditInkStore.Undo())
+            throw new InvalidOperationException("Tail-base width change must be undoable.");
+        var restored = QuickEditInkStore.Strokes.Single();
+        var oldShape = QuickEditCalloutGeometry.TailTriangle(restored, 0, tip);
+        if (oldShape.BaseLeft != original.BaseLeft || oldShape.BaseRight != original.BaseRight)
+            throw new InvalidOperationException("Undo must restore both base endpoints.");
+        QuickEditInkStore.Reset();
+    }
+
+    private static void VerifyQuickEditDoubleClickReopensText()
+    {
+        QuickEditInkStore.Reset();
+        var selection = new RectSelectionController(() => InteractionMode.ScreenshotRegionSelect,
+            () => false, () => false, () => { }, () => { });
+        selection.SetPendingScreenshotRegion(new ScreenRect(0, 0, 500, 500));
+        var controller = new RectToolsInputController(selection, new RegionMaskController(),
+            new RegionSpotlightController(), () => InteractionMode.ScreenshotRegionSelect,
+            () => new AppSettings(), _ => { }, () => { }, () => { }, () => { },
+            _ => { }, _ => { }, () => { }, () => { },
+            _ => Task.FromResult<BitmapSource?>(null), _ => Task.CompletedTask,
+            _ => Task.CompletedTask, (_, _) => { });
+        QuickEditInkStore.AddText(new ScreenPoint(30, 30), "Old");
+        var point = new ScreenPoint(100, 55);
+        controller.HandleMouseDown(point, System.Windows.Input.MouseButton.Left);
+        controller.HandleMouseUp(point, System.Windows.Input.MouseButton.Left);
+        controller.HandleMouseDown(point, System.Windows.Input.MouseButton.Left);
+        controller.HandleMouseUp(point, System.Windows.Input.MouseButton.Left);
+        if (QuickEditInkStore.ActiveText?.Text != "Old")
+            throw new InvalidOperationException("Double-clicking an existing callout must reopen its text at the end.");
+        controller.HandleTextInput("!");
+        QuickEditInkStore.CommitText();
+        if (QuickEditInkStore.Strokes.Single().Text != "Old!")
+            throw new InvalidOperationException("Typing after double-click must append to the existing text.");
+        QuickEditInkStore.Reset();
+    }
+
+    private static void VerifyQuickEditTextEditorSynchronization()
+    {
+        QuickEditInkStore.Reset();
+        QuickEditInkStore.AddText(new ScreenPoint(30, 30), "Long original text");
+        var callout = QuickEditInkStore.Strokes.Single();
+        callout.Text = new string('Ж', 200);
+        if (callout.CalloutWidth != callout.CalloutBoxWidth)
+            throw new InvalidOperationException("Long text must wrap or scroll inside the box, not push the caret off screen.");
+        callout.Text = "Long original text";
+        QuickEditInkStore.Select(QuickEditInkStore.Strokes.Single());
+        if (!QuickEditInkStore.BeginEditingSelectedText())
+            throw new InvalidOperationException("Existing callout must enter text editing.");
+        QuickEditInkStore.ReplaceActiveText("Selected replacement");
+        QuickEditInkStore.CommitText();
+        if (QuickEditInkStore.Strokes.Single().Text != "Selected replacement")
+            throw new InvalidOperationException("TextBox edits must synchronize with callout text.");
+        if (!QuickEditInkStore.Undo() || QuickEditInkStore.Strokes.Single().Text != "Long original text")
+            throw new InvalidOperationException("TextBox edits must remain undoable.");
+        QuickEditInkStore.Reset();
+    }
+
+    private static void VerifyQuickEditCalloutReferenceGeometry()
+    {
+        QuickEditInkStore.Reset();
+        QuickEditInkStore.AddText(new ScreenPoint(30, 30), "Text");
+        var callout = QuickEditInkStore.Strokes.Single();
+        if (callout.CalloutWidth < 180 || callout.CalloutHeight < 50)
+            throw new InvalidOperationException("Reference callout box must start near 180x50.");
+        if (callout.GetResizeHandles().Length != 8)
+            throw new InvalidOperationException("Reference callout must expose eight box resize handles.");
+        var tip = new ScreenPoint(100, 180);
+        if (!QuickEditInkStore.TryBeginCalloutPointerDrag(callout.GetCalloutBase(0)))
+            throw new InvalidOperationException("First tail cannot be created.");
+        QuickEditInkStore.UpdateCalloutPointerDrag(tip);
+        QuickEditInkStore.EndCalloutPointerDrag();
+        if (!QuickEditInkStore.TryBeginStrokeDrag(new ScreenPoint(100, 55)))
+            throw new InvalidOperationException("Callout box cannot be moved.");
+        QuickEditInkStore.UpdateStrokeDrag(new ScreenPoint(120, 65));
+        QuickEditInkStore.EndStrokeDrag();
+        if (callout.CalloutTarget != tip)
+            throw new InvalidOperationException("Tail tip must stay at its image coordinate when box moves.");
+        var firstBase = QuickEditCalloutGeometry.TailBaseEndpoints(callout, 0).First;
+        if (!QuickEditInkStore.TryBeginCalloutPointerDrag(firstBase))
+            throw new InvalidOperationException("Existing tail base must be draggable.");
+        QuickEditInkStore.UpdateCalloutPointerDrag(new ScreenPoint(50, 55));
+        QuickEditInkStore.EndCalloutPointerDrag();
+        if (callout.GetCalloutBaseEndpointAnchor(0, 0)?.Edge != CalloutEdge.Left
+            || QuickEditCalloutGeometry.TailBaseEndpoints(callout, 0).First.X != 50 || callout.CalloutTarget != tip)
+            throw new InvalidOperationException("Tail base must move onto the box contour without moving its tip.");
+        var rightHandle = callout.GetResizeHandles()[3];
+        if (!QuickEditInkStore.TryBeginResizeDrag(rightHandle))
+            throw new InvalidOperationException("Callout right size handle cannot be dragged.");
+        QuickEditInkStore.UpdateResizeDrag(rightHandle.Offset(40, 0));
+        QuickEditInkStore.EndResizeDrag();
+        if (callout.CalloutWidth != 220 || callout.CalloutTarget != tip
+            || QuickEditCalloutGeometry.TailBaseEndpoints(callout, 0).First.X != 50)
+            throw new InvalidOperationException("Resizing callout must preserve contour anchor and image tip.");
+        if (!QuickEditInkStore.Undo() || QuickEditInkStore.Strokes.Single().CalloutWidth != 180)
+            throw new InvalidOperationException("Callout resize must be undoable.");
+        QuickEditInkStore.Reset();
+    }
+
+    private static void VerifyQuickEditCalloutSeamlessExport()
+    {
+        var white = Enumerable.Repeat((byte)255, 300 * 240 * 4).ToArray();
+        var source = BitmapSource.Create(300, 240, 96, 96, PixelFormats.Bgra32, null, white, 300 * 4);
+        var callout = new QuickEditStroke(QuickEditTool.Text, [new ScreenPoint(30, 30)])
+        {
+            Text = "Text",
+            CalloutTarget = new ScreenPoint(90, 200),
+        };
+        var image = QuickEditImageComposer.Compose(source, new ScreenRect(0, 0, 300, 240), [callout], null);
+        var pixels = new byte[white.Length];
+        image.CopyPixels(pixels, 300 * 4, 0);
+        var baseOffset = (80 * 300 + 90) * 4;
+        if (pixels[baseOffset] < 100 || pixels[baseOffset + 1] < 220 || pixels[baseOffset + 2] < 220)
+            throw new InvalidOperationException("Tail base must be yellow, without a gray border seam.");
+    }
+
+    private static void VerifyQuickEditCalloutProjection()
+    {
+        var callout = new QuickEditStroke(QuickEditTool.Text, [new ScreenPoint(100, 100)]) { Text = "Text" };
+        var visual = new DrawingVisual();
+        using (var context = visual.RenderOpen())
+        {
+            context.DrawRectangle(Brushes.White, null, new System.Windows.Rect(0, 0, 300, 180));
+            QuickEditCalloutRenderer.Draw(context, callout,
+                point => new System.Windows.Point(point.X * 0.8, point.Y * 0.8), editing: false);
+        }
+        var image = new RenderTargetBitmap(300, 180, 96, 96, PixelFormats.Pbgra32);
+        image.Render(visual);
+        var pixels = new byte[300 * 180 * 4];
+        image.CopyPixels(pixels, 300 * 4, 0);
+        var inside = (100 * 300 + 215) * 4;
+        var outside = (100 * 300 + 230) * 4;
+        if (pixels[inside] > 210 || pixels[outside] < 245)
+            throw new InvalidOperationException("Callout box must use the same screen-to-local projection as its handles.");
+    }
+
+    private static void RenderCalloutReference()
+    {
+        const int width = 560;
+        const int height = 300;
+        var dark = new byte[width * height * 4];
+        for (var i = 0; i < dark.Length; i += 4)
+        {
+            dark[i] = 24; dark[i + 1] = 24; dark[i + 2] = 24; dark[i + 3] = 255;
+        }
+        var source = BitmapSource.Create(width, height, 96, 96, PixelFormats.Bgra32, null, dark, width * 4);
+        var first = new QuickEditStroke(QuickEditTool.Text, [new ScreenPoint(35, 55)])
+        {
+            Text = "sdfsdfsdf",
+            CalloutTarget2 = new ScreenPoint(260, 245),
+        };
+        var second = new QuickEditStroke(QuickEditTool.Text, [new ScreenPoint(320, 100)])
+        {
+            Text = "sdfsdfsdf",
+            CalloutTarget = new ScreenPoint(270, 155),
+            CalloutTarget2 = new ScreenPoint(375, 25),
+            CalloutAnchor1 = new CalloutAnchor(CalloutEdge.Left, 0.6),
+            CalloutAnchor2 = new CalloutAnchor(CalloutEdge.Top, 0.25),
+            CalloutBaseStart2 = new CalloutAnchor(CalloutEdge.Top, 0.15),
+            CalloutBaseEnd2 = new CalloutAnchor(CalloutEdge.Top, 0.55),
+            CalloutBoxHeight = 120,
+        };
+        var image = QuickEditImageComposer.Compose(source, new ScreenRect(0, 0, width, height), [first, second], null);
+        var encoder = new PngBitmapEncoder();
+        encoder.Frames.Add(BitmapFrame.Create(image));
+        var output = Path.GetFullPath("Verification/artifacts/callout-reference.png");
+        Directory.CreateDirectory(Path.GetDirectoryName(output)!);
+        using var file = File.Create(output);
+        encoder.Save(file);
+        Console.WriteLine(output);
     }
 
     private static void VerifyFineQuickEditMosaic()
@@ -1079,6 +1372,15 @@ internal static class Program
         {
             throw new InvalidOperationException("Quick Edit must use a crosshair while selecting and a tool cursor after selection.");
         }
+        QuickEditInkStore.Reset();
+        QuickEditInkStore.AddText(new ScreenPoint(120, 120), "Text");
+        QuickEditInkStore.Select(QuickEditInkStore.Strokes.Single());
+        var selected = draft with { IsDraft = false };
+        if (AnnotationCursor.ForQuickEditSelection(selected, new ScreenPoint(200, 145)) != System.Windows.Input.Cursors.IBeam
+            || AnnotationCursor.ForQuickEditSelection(selected, new ScreenPoint(120, 120)) != System.Windows.Input.Cursors.SizeNWSE
+            || AnnotationCursor.ForQuickEditSelection(selected, QuickEditInkStore.SelectedCallout!.GetCalloutBase(0)) != System.Windows.Input.Cursors.SizeAll)
+            throw new InvalidOperationException("Text, resize, and pointer handles need distinct hover cursors.");
+        QuickEditInkStore.Reset();
     }
 
     private static void VerifyQuickEditPaletteAndGestureTools()

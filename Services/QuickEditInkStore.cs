@@ -19,6 +19,9 @@ internal static class QuickEditInkStore
     public static QuickEditStroke? SelectedCallout { get; private set; }
     public static bool IsCalloutPointerDragging => _draggedCallout is not null;
     private static QuickEditStroke? _draggedCallout;
+    private static int _draggedTailIndex;
+    private static int _draggedCalloutEndpoint = -1;
+    private static bool _calloutDragSaved;
     public static bool IsArrowControlDragging => _draggedArrow is not null;
     private static QuickEditStroke? _draggedArrow;
     private static int _draggedControl;
@@ -37,7 +40,7 @@ internal static class QuickEditInkStore
     public static BitmapSource? PixelatedSource { get; private set; }
     public static ScreenRect SourceFrame { get; private set; }
 
-    public static void Reset() { Strokes.Clear(); UndoStack.Clear(); RedoStack.Clear(); Draft = null; SelectedStroke = null; SelectedArrow = null; ActiveText = null; SelectedCallout = null; _draggedCallout = null; _draggedArrow = null; _draggedStroke = null; _draggedControl = 0; Tool = QuickEditTool.Pencil; Source = null; PixelatedSource = null; SourceFrame = default; }
+    public static void Reset() { Strokes.Clear(); UndoStack.Clear(); RedoStack.Clear(); Draft = null; SelectedStroke = null; SelectedArrow = null; ActiveText = null; SelectedCallout = null; _draggedCallout = null; _draggedTailIndex = 0; _draggedArrow = null; _draggedStroke = null; _draggedControl = 0; Tool = QuickEditTool.Pencil; Source = null; PixelatedSource = null; SourceFrame = default; }
     public static void SetSource(ScreenRect frame, BitmapSource source)
     {
         SourceFrame = frame;
@@ -90,9 +93,35 @@ internal static class QuickEditInkStore
         ActiveText = text;
         return true;
     }
+    public static bool TryBeginEditingTextAt(ScreenPoint point)
+    {
+        foreach (var text in Strokes.AsEnumerable().Reverse())
+        {
+            if (text.Tool != QuickEditTool.Text || !Hit(text, point)) continue;
+            if (text.GetResizeHandles().Any(handle => handle.DistanceTo(point) <= 10)) return false;
+            for (var tail = 0; tail < 2; tail++)
+            {
+                var tip = tail == 0 ? text.CalloutTarget : text.CalloutTarget2;
+                if (tip?.DistanceTo(point) <= 10) return false;
+                if (tip is null && text.GetCalloutBase(tail).DistanceTo(point) <= 10) return false;
+                if (tip is not null)
+                {
+                    var (first, second) = QuickEditCalloutGeometry.TailBaseEndpoints(text, tail);
+                    if (first.DistanceTo(point) <= 10 || second.DistanceTo(point) <= 10) return false;
+                }
+            }
+            Select(text);
+            return BeginEditingSelectedText();
+        }
+        return false;
+    }
     public static void AppendText(string text)
     {
         if (ActiveText is not null) ActiveText.Text += text;
+    }
+    public static void ReplaceActiveText(string text)
+    {
+        if (ActiveText is not null) ActiveText.Text = text;
     }
     public static void BackspaceText()
     {
@@ -126,6 +155,15 @@ internal static class QuickEditInkStore
         {
             ActiveText.Text = _textBeforeEdit.Text;
             ActiveText.CalloutTarget = _textBeforeEdit.CalloutTarget;
+            ActiveText.CalloutTarget2 = _textBeforeEdit.CalloutTarget2;
+            ActiveText.CalloutAnchor1 = _textBeforeEdit.CalloutAnchor1;
+            ActiveText.CalloutAnchor2 = _textBeforeEdit.CalloutAnchor2;
+            ActiveText.CalloutBaseStart1 = _textBeforeEdit.CalloutBaseStart1;
+            ActiveText.CalloutBaseEnd1 = _textBeforeEdit.CalloutBaseEnd1;
+            ActiveText.CalloutBaseStart2 = _textBeforeEdit.CalloutBaseStart2;
+            ActiveText.CalloutBaseEnd2 = _textBeforeEdit.CalloutBaseEnd2;
+            ActiveText.CalloutBoxWidth = _textBeforeEdit.CalloutBoxWidth;
+            ActiveText.CalloutBoxHeight = _textBeforeEdit.CalloutBoxHeight;
         }
         ActiveText = null;
         _textBeforeEdit = null;
@@ -136,20 +174,50 @@ internal static class QuickEditInkStore
         foreach (var callout in Strokes.AsEnumerable().Reverse())
         {
             if (callout.Tool != QuickEditTool.Text) continue;
-            if (callout.CalloutHandle.DistanceTo(point) > 10
-                && (callout.CalloutTarget is not { } target || target.DistanceTo(point) > 10)) continue;
-            SaveHistory();
+            var index = -1;
+            var endpoint = -1;
+            for (var tail = 0; tail < 2 && index < 0; tail++)
+            {
+                var target = tail == 0 ? callout.CalloutTarget : callout.CalloutTarget2;
+                if (target?.DistanceTo(point) <= 10) { index = tail; break; }
+                if (target is null)
+                {
+                    if (callout.GetCalloutBase(tail).DistanceTo(point) <= 10) index = tail;
+                    continue;
+                }
+                var (first, second) = QuickEditCalloutGeometry.TailBaseEndpoints(callout, tail);
+                if (first.DistanceTo(point) <= 10) { index = tail; endpoint = 0; }
+                else if (second.DistanceTo(point) <= 10) { index = tail; endpoint = 1; }
+            }
+            if (index < 0) continue;
             Select(callout);
             _draggedCallout = callout;
+            _draggedTailIndex = index;
+            _draggedCalloutEndpoint = endpoint;
+            _calloutDragSaved = false;
             return true;
         }
         return false;
     }
     public static void UpdateCalloutPointerDrag(ScreenPoint point)
     {
-        if (_draggedCallout is not null) _draggedCallout.CalloutTarget = point;
+        if (_draggedCallout is null) return;
+        if (_draggedCalloutEndpoint >= 0)
+        {
+            var anchor = QuickEditCalloutGeometry.ProjectToContour(_draggedCallout, point);
+            if (_draggedCallout.GetCalloutBaseEndpointAnchor(_draggedTailIndex, _draggedCalloutEndpoint) == anchor) return;
+            if (!_calloutDragSaved) { SaveHistory(); _calloutDragSaved = true; }
+            _draggedCallout.SetCalloutBaseEndpointAnchor(_draggedTailIndex, _draggedCalloutEndpoint, anchor);
+            return;
+        }
+        var target = point.DistanceTo(_draggedCallout.GetCalloutBase(_draggedTailIndex)) <= 6 ? (ScreenPoint?)null : point;
+        var current = _draggedTailIndex == 0 ? _draggedCallout.CalloutTarget : _draggedCallout.CalloutTarget2;
+        if (current == target) return;
+        if (!_calloutDragSaved) { SaveHistory(); _calloutDragSaved = true; }
+        if (_draggedTailIndex == 0) _draggedCallout.CalloutTarget = target;
+        else _draggedCallout.CalloutTarget2 = target;
     }
-    public static void EndCalloutPointerDrag() => _draggedCallout = null;
+    public static void EndCalloutPointerDrag() { _draggedCallout = null; _draggedTailIndex = 0; _draggedCalloutEndpoint = -1; }
     public static void Commit()
     {
         if (Draft is { Points.Count: > 1 } draft)
@@ -245,7 +313,11 @@ internal static class QuickEditInkStore
         if (!_dragHistorySaved) { SaveHistory(); _dragHistorySaved = true; }
         _draggedStroke.Points.Clear();
         _draggedStroke.Points.AddRange(original.Points.Select(p => p.Offset(dx, dy)));
-        _draggedStroke.CalloutTarget = original.CalloutTarget?.Offset(dx, dy);
+        if (_draggedStroke.Tool != QuickEditTool.Text)
+        {
+            _draggedStroke.CalloutTarget = original.CalloutTarget?.Offset(dx, dy);
+            _draggedStroke.CalloutTarget2 = original.CalloutTarget2?.Offset(dx, dy);
+        }
         _draggedStroke.SetArrowControlsFrom(original, dx, dy);
     }
 
@@ -254,7 +326,8 @@ internal static class QuickEditInkStore
     public static bool TryBeginResizeDrag(ScreenPoint point)
     {
         var stroke = SelectedStroke;
-        if (stroke is null || stroke.Points.Count < 2 || stroke.Tool is not (QuickEditTool.Line or QuickEditTool.Rectangle or QuickEditTool.Ellipse or QuickEditTool.Mosaic)) return false;
+        if (stroke is null || (stroke.Points.Count < 2 && stroke.Tool != QuickEditTool.Text)
+            || stroke.Tool is not (QuickEditTool.Line or QuickEditTool.Rectangle or QuickEditTool.Ellipse or QuickEditTool.Mosaic or QuickEditTool.Text)) return false;
         var handle = Array.FindIndex(stroke.GetResizeHandles(), candidate => candidate.DistanceTo(point) <= 10);
         if (handle < 0) return false;
         _resizedStroke = stroke;
@@ -265,6 +338,34 @@ internal static class QuickEditInkStore
     public static void UpdateResizeDrag(ScreenPoint point)
     {
         if (_resizedStroke is null) return;
+        if (_resizedStroke.Tool == QuickEditTool.Text)
+        {
+            var stroke = _resizedStroke;
+            var origin = stroke.Points[0];
+            var left = origin.X;
+            var top = origin.Y;
+            var right = left + stroke.CalloutWidth;
+            var bottom = top + stroke.CalloutHeight;
+            var minWidth = stroke.CalloutMinimumWidth;
+            var minHeight = stroke.CalloutMinimumHeight;
+            switch (_resizedHandle)
+            {
+                case 0: left = Math.Min(point.X, right - minWidth); top = Math.Min(point.Y, bottom - minHeight); break;
+                case 1: top = Math.Min(point.Y, bottom - minHeight); break;
+                case 2: right = Math.Max(point.X, left + minWidth); top = Math.Min(point.Y, bottom - minHeight); break;
+                case 3: right = Math.Max(point.X, left + minWidth); break;
+                case 4: right = Math.Max(point.X, left + minWidth); bottom = Math.Max(point.Y, top + minHeight); break;
+                case 5: bottom = Math.Max(point.Y, top + minHeight); break;
+                case 6: left = Math.Min(point.X, right - minWidth); bottom = Math.Max(point.Y, top + minHeight); break;
+                case 7: left = Math.Min(point.X, right - minWidth); break;
+            }
+            if (origin == new ScreenPoint(left, top) && stroke.CalloutWidth == right - left && stroke.CalloutHeight == bottom - top) return;
+            if (!_resizeHistorySaved) { SaveHistory(); _resizeHistorySaved = true; }
+            stroke.Points[0] = new ScreenPoint(left, top);
+            stroke.CalloutBoxWidth = right - left;
+            stroke.CalloutBoxHeight = bottom - top;
+            return;
+        }
         if (_resizedStroke.Tool == QuickEditTool.Ellipse)
         {
             var first = _resizedStroke.Points[0];
@@ -322,7 +423,12 @@ internal static class QuickEditInkStore
     private static List<QuickEditStroke> Snapshot() => Strokes.Select(Clone).ToList();
     private static QuickEditStroke Clone(QuickEditStroke stroke)
     {
-        var copy = new QuickEditStroke(stroke.Tool, [.. stroke.Points]) { Text = stroke.Text, CalloutTarget = stroke.CalloutTarget };
+        var copy = new QuickEditStroke(stroke.Tool, [.. stroke.Points]) { Text = stroke.Text,
+            CalloutTarget = stroke.CalloutTarget, CalloutTarget2 = stroke.CalloutTarget2,
+            CalloutAnchor1 = stroke.CalloutAnchor1, CalloutAnchor2 = stroke.CalloutAnchor2,
+            CalloutBaseStart1 = stroke.CalloutBaseStart1, CalloutBaseEnd1 = stroke.CalloutBaseEnd1,
+            CalloutBaseStart2 = stroke.CalloutBaseStart2, CalloutBaseEnd2 = stroke.CalloutBaseEnd2,
+            CalloutBoxWidth = stroke.CalloutBoxWidth, CalloutBoxHeight = stroke.CalloutBoxHeight };
         copy.SetArrowControlsFrom(stroke, 0, 0);
         return copy;
     }
@@ -341,10 +447,9 @@ internal static class QuickEditInkStore
             return points[0].DistanceTo(point) <= StepBadgeRadius + 4;
         if (stroke.Tool == QuickEditTool.Text)
         {
-            var handle = stroke.CalloutHandle;
-            var width = (handle.X - points[0].X) * 2;
+            var width = stroke.CalloutWidth;
             return point.X >= points[0].X - 5 && point.X <= points[0].X + width + 5
-                && point.Y >= points[0].Y - 5 && point.Y <= handle.Y + 5;
+                && point.Y >= points[0].Y - 5 && point.Y <= points[0].Y + stroke.CalloutHeight + 5;
         }
         if (points.Count < 2) return false;
         if (stroke.Tool is QuickEditTool.Rectangle or QuickEditTool.Mosaic or QuickEditTool.Ellipse)
@@ -411,20 +516,72 @@ internal sealed record QuickEditStroke(QuickEditTool Tool, List<ScreenPoint> Poi
 {
     public string? Text { get; set; }
     public ScreenPoint? CalloutTarget { get; set; }
-    public ScreenPoint CalloutHandle
+    public ScreenPoint? CalloutTarget2 { get; set; }
+    public CalloutAnchor CalloutAnchor1 { get; set; } = new(CalloutEdge.Bottom, 1.0 / 3);
+    public CalloutAnchor CalloutAnchor2 { get; set; } = new(CalloutEdge.Bottom, 2.0 / 3);
+    public CalloutAnchor? CalloutBaseStart1 { get; set; }
+    public CalloutAnchor? CalloutBaseEnd1 { get; set; }
+    public CalloutAnchor? CalloutBaseStart2 { get; set; }
+    public CalloutAnchor? CalloutBaseEnd2 { get; set; }
+    public double CalloutBoxWidth { get; set; } = 180;
+    public double CalloutBoxHeight { get; set; } = 50;
+    public double CalloutMinimumWidth => 100;
+    public double CalloutMinimumHeight => Math.Max(42, (Text ?? string.Empty).Replace("\r\n", "\n").Split('\n').Length * 23 + 16);
+    public double CalloutWidth => Math.Max(CalloutBoxWidth, CalloutMinimumWidth);
+    public double CalloutHeight => Math.Max(CalloutBoxHeight, CalloutMinimumHeight);
+    public CalloutAnchor GetCalloutAnchor(int index) => index switch
     {
-        get
+        0 => CalloutAnchor1,
+        1 => CalloutAnchor2,
+        _ => throw new ArgumentOutOfRangeException(nameof(index)),
+    };
+    public void SetCalloutAnchor(int index, CalloutAnchor anchor)
+    {
+        if (index == 0) CalloutAnchor1 = anchor;
+        else if (index == 1) CalloutAnchor2 = anchor;
+        else throw new ArgumentOutOfRangeException(nameof(index));
+    }
+    public CalloutAnchor? GetCalloutBaseEndpointAnchor(int index, int endpoint) => (index, endpoint) switch
+    {
+        (0, 0) => CalloutBaseStart1,
+        (0, 1) => CalloutBaseEnd1,
+        (1, 0) => CalloutBaseStart2,
+        (1, 1) => CalloutBaseEnd2,
+        _ => throw new ArgumentOutOfRangeException(nameof(index)),
+    };
+    public void SetCalloutBaseEndpointAnchor(int index, int endpoint, CalloutAnchor anchor)
+    {
+        switch (index, endpoint)
         {
-            var lines = (Text ?? string.Empty).Replace("\r\n", "\n").Split('\n');
-            var width = Math.Max(120, lines.Max(line => line.Length) * 10 + 16);
-            return Points[0].Offset(width / 2, lines.Length * 22 + 12);
+            case (0, 0): CalloutBaseStart1 = anchor; break;
+            case (0, 1): CalloutBaseEnd1 = anchor; break;
+            case (1, 0): CalloutBaseStart2 = anchor; break;
+            case (1, 1): CalloutBaseEnd2 = anchor; break;
+            default: throw new ArgumentOutOfRangeException(nameof(index));
         }
     }
+    public ScreenPoint GetCalloutBase(int index)
+    {
+        return QuickEditCalloutGeometry.PointOnContour(this, GetCalloutAnchor(index));
+    }
+    public ScreenPoint CalloutHandle => GetCalloutBase(0);
     public ScreenPoint? Control1 { get; private set; }
     public ScreenPoint? Control2 { get; private set; }
 
     public ScreenPoint[] GetResizeHandles()
     {
+        if (Tool == QuickEditTool.Text)
+        {
+            var origin = Points[0];
+            var middleX = origin.X + CalloutWidth / 2;
+            var middleY = origin.Y + CalloutHeight / 2;
+            var boxRight = origin.X + CalloutWidth;
+            var boxBottom = origin.Y + CalloutHeight;
+            return [origin, new ScreenPoint(middleX, origin.Y), new ScreenPoint(boxRight, origin.Y),
+                new ScreenPoint(boxRight, middleY), new ScreenPoint(boxRight, boxBottom),
+                new ScreenPoint(middleX, boxBottom), new ScreenPoint(origin.X, boxBottom),
+                new ScreenPoint(origin.X, middleY)];
+        }
         if (Points.Count < 2) return [];
         if (Tool != QuickEditTool.Ellipse) return [Points[0], Points[^1]];
         var left = Math.Min(Points[0].X, Points[^1].X);

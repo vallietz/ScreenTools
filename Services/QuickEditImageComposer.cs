@@ -59,26 +59,7 @@ internal static class QuickEditImageComposer
                 return;
             case QuickEditTool.Text:
                 if (string.IsNullOrWhiteSpace(stroke.Text)) return;
-                var text = new FormattedText(stroke.Text, CultureInfo.CurrentCulture,
-                    FlowDirection.LeftToRight, new Typeface("Segoe UI"), 18, Brushes.Black, 1);
-                var handle = Local(stroke.CalloutHandle);
-                if (stroke.CalloutTarget is { } target)
-                {
-                    var tip = Local(target);
-                    context.DrawLine(redPen, handle, tip);
-                    var direction = tip - handle;
-                    if (direction.Length >= 0.01)
-                    {
-                        direction.Normalize();
-                        var back = tip - direction * 11;
-                        var wing = new Vector(-direction.Y, direction.X) * 5;
-                        context.DrawLine(redPen, tip, back + wing);
-                        context.DrawLine(redPen, tip, back - wing);
-                    }
-                }
-                context.DrawRectangle(Brushes.LightYellow, redPen,
-                    new Rect(start, new Size((handle.X - start.X) * 2, handle.Y - start.Y)));
-                context.DrawText(text, start + new Vector(8, 6));
+                QuickEditCalloutRenderer.Draw(context, stroke, Local, editing: false);
                 return;
             case QuickEditTool.Mosaic:
                 if (pixelatedSource is null) return;

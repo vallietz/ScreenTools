@@ -413,31 +413,7 @@ internal sealed class OverlaySurface : FrameworkElement
                 if (!string.IsNullOrWhiteSpace(stroke.Text) || ReferenceEquals(stroke, QuickEditInkStore.ActiveText))
                 {
                     var editing = ReferenceEquals(stroke, QuickEditInkStore.ActiveText);
-                    var text = GetFormattedText((stroke.Text ?? string.Empty) + (editing ? "|" : string.Empty), Colors.Black, 1, 18, 22);
-                    var origin = ToLocal(points[0]);
-                    var handle = ToLocal(stroke.CalloutHandle);
-                    var box = new Rect(origin, new System.Windows.Size(handle.X - origin.X + handle.X - origin.X, handle.Y - origin.Y));
-                    if (stroke.CalloutTarget is { } target)
-                    {
-                        var tip = ToLocal(target);
-                        drawingContext.DrawLine(CreatePen(Colors.Red, 1, 2), handle, tip);
-                        var direction = tip - handle;
-                        if (direction.Length >= 0.01)
-                        {
-                            direction.Normalize();
-                            var back = tip - direction * 11;
-                            var wing = new Vector(-direction.Y, direction.X) * 5;
-                            drawingContext.DrawLine(CreatePen(Colors.Red, 1, 2), tip, back + wing);
-                            drawingContext.DrawLine(CreatePen(Colors.Red, 1, 2), tip, back - wing);
-                        }
-                    }
-                    drawingContext.DrawRectangle(GetBrush(Colors.LightYellow, 0.94), CreatePen(Colors.Red, 0.85, 1), box);
-                    drawingContext.DrawText(text, new WpfPoint(origin.X + 8, origin.Y + 6));
-                    if (editing || ReferenceEquals(stroke, QuickEditInkStore.SelectedCallout))
-                    {
-                        var pointer = stroke.CalloutTarget is { } targetPoint ? ToLocal(targetPoint) : handle;
-                        drawingContext.DrawEllipse(GetBrush(Colors.White, 0.95), CreatePen(Colors.Red, 1, 1), pointer, 5, 5);
-                    }
+                    QuickEditCalloutRenderer.Draw(drawingContext, stroke, ToLocal, editing);
                 }
                 continue;
             }
@@ -536,10 +512,20 @@ internal sealed class OverlaySurface : FrameworkElement
             foreach (var point in selectedStroke.GetResizeHandles())
                 drawingContext.DrawEllipse(GetBrush(Colors.White, 0.95), CreatePen(Colors.Black, 0.9, 1), ToLocal(point), 4, 4);
         }
-        if (QuickEditInkStore.SelectedCallout is { } selectedCallout)
+        if ((QuickEditInkStore.SelectedCallout ?? QuickEditInkStore.ActiveText) is { } selectedCallout)
         {
-            var point = selectedCallout.CalloutTarget ?? selectedCallout.CalloutHandle;
-            drawingContext.DrawEllipse(GetBrush(Colors.White, 0.95), CreatePen(Colors.Red, 1, 1), ToLocal(point), 5, 5);
+            foreach (var point in selectedCallout.GetResizeHandles())
+                drawingContext.DrawEllipse(GetBrush(Colors.White, 0.95), CreatePen(Colors.Black, 0.9, 1), ToLocal(point), 4, 4);
+            for (var tail = 0; tail < 2; tail++)
+            {
+                var tip = tail == 0 ? selectedCallout.CalloutTarget : selectedCallout.CalloutTarget2;
+                var handles = tip is null
+                    ? new[] { selectedCallout.GetCalloutBase(tail) }
+                    : new[] { QuickEditCalloutGeometry.TailBaseEndpoints(selectedCallout, tail).First,
+                        QuickEditCalloutGeometry.TailBaseEndpoints(selectedCallout, tail).Second, tip.Value };
+                foreach (var handle in handles)
+                    drawingContext.DrawEllipse(GetBrush(Colors.LimeGreen, 1), CreatePen(Colors.DarkGreen, 1, 1), ToLocal(handle), 5, 5);
+            }
         }
     }
 
@@ -548,7 +534,7 @@ internal sealed class OverlaySurface : FrameworkElement
         var palette = ToRect(QuickEditPalette.Bounds(selection));
         drawingContext.DrawRoundedRectangle(GetBrush(MediaColor.FromRgb(38, 38, 38), 0.98),
             CreatePen(Colors.White, 0.32, 1), palette, 4, 4);
-        var labels = new[] { "✎", "╱", "➜", "▭", "◯", "Т", "▦", "", "①", "Copy", "PNG", "×" };
+        var labels = new[] { "✎", "╱", "➜", "▭", "◯", "", "▦", "", "①", "Copy", "PNG", "×" };
         var selectedTool = QuickEditInkStore.Tool;
         for (var index = 0; index < labels.Length; index++)
         {
@@ -567,6 +553,27 @@ internal sealed class OverlaySurface : FrameworkElement
                 drawingContext.DrawRectangle(GetBrush(Colors.Gold, 1), CreatePen(Colors.Black, 0.9, 1),
                     new Rect(center.X - 5, center.Y + 5, 10, 5));
                 drawingContext.Pop();
+                continue;
+            }
+            if (index == 5)
+            {
+                var center = new WpfPoint(item.Left + item.Width / 2, item.Top + item.Height / 2);
+                var blue = MediaColor.FromRgb(111, 145, 255);
+                var bubble = new StreamGeometry();
+                using (var path = bubble.Open())
+                {
+                    path.BeginFigure(new WpfPoint(center.X - 8, center.Y - 6), true, true);
+                    path.LineTo(new WpfPoint(center.X + 8, center.Y - 6), true, false);
+                    path.LineTo(new WpfPoint(center.X + 8, center.Y + 4), true, false);
+                    path.LineTo(new WpfPoint(center.X + 4, center.Y + 4), true, false);
+                    path.LineTo(new WpfPoint(center.X + 2, center.Y + 8), true, false);
+                    path.LineTo(new WpfPoint(center.X, center.Y + 4), true, false);
+                    path.LineTo(new WpfPoint(center.X - 8, center.Y + 4), true, false);
+                }
+                drawingContext.DrawGeometry(GetBrush(blue, 0.12), CreatePen(blue, 1, 1.5), bubble);
+                for (var dot = -1; dot <= 1; dot++)
+                    drawingContext.DrawEllipse(GetBrush(blue, 1), null,
+                        new WpfPoint(center.X + dot * 4, center.Y - 1), 0.8, 0.8);
                 continue;
             }
             var text = GetFormattedText(labels[index], Colors.White, 0.96, 12.5, 15);

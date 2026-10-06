@@ -30,6 +30,9 @@ internal sealed class RectToolsInputController
     private bool _quickEditDrawing;
     private bool _quickEditExporting;
     private Task? _quickEditSourceTask;
+    private ScreenPoint? _textClickDown;
+    private ScreenPoint? _lastTextClickPoint;
+    private long _lastTextClickAt;
 
     public RectToolsInputController(
         RectSelectionController selection,
@@ -361,9 +364,20 @@ internal sealed class RectToolsInputController
         {
             QuickEditInkStore.CommitText();
             _invalidateOverlay();
-            if (_selection.PendingScreenshotRegion is not { } textFrame
-                || !QuickEditPalette.TryHit(textFrame, point, out _)) return;
         }
+
+        var now = Environment.TickCount64;
+        var doubleClickSize = System.Windows.Forms.SystemInformation.DoubleClickSize;
+        if (_lastTextClickPoint is { } previous && now - _lastTextClickAt <= System.Windows.Forms.SystemInformation.DoubleClickTime
+            && Math.Abs(point.X - previous.X) <= doubleClickSize.Width / 2.0
+            && Math.Abs(point.Y - previous.Y) <= doubleClickSize.Height / 2.0
+            && QuickEditInkStore.TryBeginEditingTextAt(point))
+        {
+            _lastTextClickPoint = null;
+            _invalidateOverlay();
+            return;
+        }
+        _lastTextClickPoint = null;
 
         if (_selection.PendingScreenshotRegion is { } frame
             && QuickEditPalette.TryHit(frame, point, out var action))
@@ -406,6 +420,7 @@ internal sealed class RectToolsInputController
             }
             if (QuickEditInkStore.TryBeginStrokeDrag(point))
             {
+                _textClickDown = QuickEditInkStore.SelectedStroke?.Tool == QuickEditTool.Text ? point : null;
                 _invalidateOverlay();
                 return;
             }
@@ -565,6 +580,14 @@ internal sealed class RectToolsInputController
 
         if (QuickEditInkStore.IsStrokeDragging)
         {
+            if (_textClickDown is { } down
+                && down.DistanceTo(point) <= Math.Max(System.Windows.Forms.SystemInformation.DoubleClickSize.Width,
+                    System.Windows.Forms.SystemInformation.DoubleClickSize.Height) / 2.0)
+            {
+                _lastTextClickPoint = point;
+                _lastTextClickAt = Environment.TickCount64;
+            }
+            _textClickDown = null;
             QuickEditInkStore.UpdateStrokeDrag(point);
             QuickEditInkStore.EndStrokeDrag();
             _invalidateOverlay();
