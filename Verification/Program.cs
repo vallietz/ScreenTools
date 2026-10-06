@@ -196,6 +196,24 @@ internal static class Program
         {
             throw new InvalidOperationException("Laser pencil must disappear automatically after N seconds.");
         }
+
+        document.BeginTemporaryLaserPencil(new ScreenPoint(0, 0), settings);
+        document.UpdateTemporaryLaserPencil(new ScreenPoint(10, 0));
+        document.UpdateTemporaryLaserPencil(new ScreenPoint(20, 0));
+        document.CommitTemporaryLaserPencil();
+        nowMs += 6000;
+        var fadingStroke = document.TemporaryLaserStrokes.Single();
+        if (fadingStroke.GetTemporaryTailStartIndex(nowMs) != 0)
+        {
+            throw new InvalidOperationException("Laser pencil must keep its complete path before fade-out begins.");
+        }
+
+        nowMs += 500;
+        if (fadingStroke.GetTemporaryTailStartIndex(nowMs) is not 1)
+        {
+            throw new InvalidOperationException("Laser pencil must erase from the oldest tail points first.");
+        }
+
     }
 
     private static void VerifyQuickEditObjectEditingAndHistory()

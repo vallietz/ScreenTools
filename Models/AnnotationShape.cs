@@ -106,6 +106,18 @@ internal sealed class AnnotationShape
         return 1 - SmoothStep(progress);
     }
 
+    public int GetTemporaryTailStartIndex(double nowMs)
+    {
+        if (!IsTemporary || CreatedAtMs <= 0 || Points.Count < 2 || TemporaryFadeMs <= 0)
+        {
+            return 0;
+        }
+
+        var fadeStartMs = CreatedAtMs + TemporaryVisibleMs;
+        var progress = Math.Clamp((nowMs - fadeStartMs) / TemporaryFadeMs, 0, 1);
+        return Math.Clamp((int)Math.Floor(progress * (Points.Count - 1)), 0, Points.Count - 1);
+    }
+
     public ScreenRect GetBounds()
     {
         var bounds = Tool switch

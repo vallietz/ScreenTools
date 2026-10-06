@@ -92,16 +92,12 @@ internal sealed class AnnotationRenderer
 
         foreach (var shape in _annotations.TemporaryLaserStrokes)
         {
-            var opacityScale = shape.GetOpacityScale(nowMs);
-            if (opacityScale > 0.001)
-            {
-                DrawShape(drawingContext, shape, isDraft: false, opacityScale);
-            }
+            DrawTemporaryLaserPencil(drawingContext, shape, nowMs);
         }
 
         if (_annotations.TemporaryLaserDraft is { } laserDraft)
         {
-            DrawShape(drawingContext, laserDraft, isDraft: false, opacityScale: 1);
+            DrawTemporaryLaserPencil(drawingContext, laserDraft, nowMs);
         }
 
         if (_annotations.Draft is { Tool: not AnnotationTool.Move } draft)
@@ -319,6 +315,34 @@ internal sealed class AnnotationRenderer
         }
 
         drawingContext.DrawGeometry(null, pen, GetStrokeGeometry(shape));
+    }
+
+    private void DrawTemporaryLaserPencil(DrawingContext drawingContext, AnnotationShape shape, double nowMs)
+    {
+        var startIndex = shape.GetTemporaryTailStartIndex(nowMs);
+        if (startIndex >= shape.Points.Count)
+        {
+            return;
+        }
+
+        var visible = shape.Clone();
+        visible.Points = [.. shape.Points.Skip(startIndex)];
+        var color = AppSettings.TryParseColor(visible.Color, out var parsedColor)
+            ? parsedColor
+            : Colors.Red;
+        var pen = _createPen(color, 0.95, visible.Thickness);
+
+        if (visible.Points.Count == 1)
+        {
+            var center = _toLocal(visible.Points[0]);
+            drawingContext.DrawEllipse(pen.Brush, null, center, pen.Thickness / 2, pen.Thickness / 2);
+            return;
+        }
+
+        drawingContext.DrawGeometry(
+            null,
+            pen,
+            BuildStrokeGeometry(visible, StrokeSmoothingLevel.Balanced, finalize: false));
     }
 
     private Geometry GetStrokeGeometry(AnnotationShape shape)
