@@ -24,6 +24,7 @@ internal static class Program
             VerifyBurnTrailRetainsPathAndExpires();
             VerifyBurnTrailStyle();
             VerifyLaserBurnGesture();
+            VerifyTemporaryLaserPencilIsNotAnAnnotation();
             VerifyOpaquePrivacyPixel();
             VerifyMismatchedDimensionsFail();
             VerifyOverlaySegmentsArePlacedInSourceCoordinates();
@@ -108,14 +109,17 @@ internal static class Program
     private static void VerifyLaserBurnGesture()
     {
         var nowMs = 1000.0;
+        var settings = new AppSettings { LaserActivationMode = LaserActivationMode.Hold.ToString() };
+        var annotations = new AnnotationDocument(() => nowMs);
         using var controller = new PointerVisualController(
-            () => new AppSettings(),
+            annotations,
+            () => settings,
             () => nowMs,
             () => false,
             (out ScreenPoint point) =>
             {
-                point = default;
-                return false;
+                point = new ScreenPoint(40, 60);
+                return true;
             },
             _ => { },
             () => { },
@@ -127,23 +131,70 @@ internal static class Program
             idleInterval: TimeSpan.FromMilliseconds(500));
 
         controller.HandleLaserBurnMouseDown();
-        if (controller.Trail.IsCapturingBurn)
+        if (annotations.TemporaryLaserDraft is not null)
         {
             throw new InvalidOperationException("Inactive laser must ignore a burn gesture.");
         }
 
+        settings.LaserActivationMode = LaserActivationMode.Always.ToString();
         controller.SetLaserVisualActive(true);
         controller.HandleLaserBurnMouseDown();
-        if (!controller.Trail.IsCapturingBurn)
+        if (annotations.TemporaryLaserDraft is null)
         {
             throw new InvalidOperationException("Left mouse down must retain an active laser trail.");
         }
 
         nowMs += 100;
         controller.HandleLaserBurnMouseUp();
-        if (controller.Trail.IsCapturingBurn || !controller.Trail.TryGetBurnFrame(nowMs, out _))
+        if (annotations.TemporaryLaserDraft is not null || annotations.TemporaryLaserStrokes.Count != 1)
         {
             throw new InvalidOperationException("Left mouse up must start the laser burn fade.");
+        }
+
+        controller.SetLaserVisualActive(true);
+        controller.HandleLaserBurnMouseDown();
+        nowMs += 100;
+        controller.SetLaserVisualActive(false);
+        if (annotations.TemporaryLaserStrokes.Count != 2)
+        {
+            throw new InvalidOperationException("Leaving laser mode must fade an active burn instead of clearing it.");
+        }
+    }
+
+    private static void VerifyTemporaryLaserPencilIsNotAnAnnotation()
+    {
+        var nowMs = 1000.0;
+        var document = new AnnotationDocument(() => nowMs);
+        var settings = new AppSettings { LaserBurnDurationMs = 7000 };
+
+        document.BeginTemporaryLaserPencil(new ScreenPoint(10, 20), settings);
+        document.UpdateTemporaryLaserPencil(new ScreenPoint(80, 90));
+        document.CommitTemporaryLaserPencil();
+
+        if (document.Shapes.Count != 0 || document.TemporaryLaserStrokes.Count != 1)
+        {
+            throw new InvalidOperationException("Laser pencil must stay outside the editable annotation document.");
+        }
+
+        var stroke = document.TemporaryLaserStrokes.Single();
+        if (stroke.Tool != AnnotationTool.Pencil
+            || !AppSettings.TryParseColor(stroke.Color, out var strokeColor)
+            || strokeColor.A >= 255
+            || stroke.Points.Count != 2)
+        {
+            throw new InvalidOperationException("Laser pencil must reuse the pencil geometry and laser color.");
+        }
+
+        nowMs += 6999;
+        if (document.RemoveExpiredTemporaryLaserStrokes(nowMs) || document.TemporaryLaserStrokes.Count != 1)
+        {
+            throw new InvalidOperationException("Laser pencil must remain visible for the configured N seconds.");
+        }
+
+        nowMs += 1;
+        if (!document.RemoveExpiredTemporaryLaserStrokes(nowMs) || document.TemporaryLaserStrokes.Count != 0)
+        {
+            throw new InvalidOperationException("Laser pencil must disappear automatically after N seconds.");
         }
     }
 

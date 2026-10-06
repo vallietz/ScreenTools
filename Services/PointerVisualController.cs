@@ -9,8 +9,10 @@ internal sealed class PointerVisualController : IDisposable
 {
     private const double CursorPulseDurationMs = 360;
     private const int MaximumCursorClickPulses = 4;
+    private const int VkLButton = 0x01;
 
     private readonly TrailModel _trail = new();
+    private readonly AnnotationDocument _annotations;
     private readonly List<CursorClickPulse> _cursorClickPulses = [];
     private readonly Func<AppSettings> _settingsProvider;
     private readonly Func<double> _clock;
@@ -32,8 +34,10 @@ internal sealed class PointerVisualController : IDisposable
     private bool _hasLastCursor;
     private bool _hasCursorHighlightPoint;
     private bool _laserVisuallyActive;
+    private bool _leftMouseButtonDown;
 
     public PointerVisualController(
+        AnnotationDocument annotations,
         Func<AppSettings> settingsProvider,
         Func<double> clock,
         Func<bool> isDisposed,
@@ -47,6 +51,7 @@ internal sealed class PointerVisualController : IDisposable
         TimeSpan fadeInterval,
         TimeSpan idleInterval)
     {
+        _annotations = annotations;
         _settingsProvider = settingsProvider;
         _clock = clock;
         _isDisposed = isDisposed;
@@ -112,18 +117,10 @@ internal sealed class PointerVisualController : IDisposable
             return;
         }
 
-        if (_settingsProvider().ClickPulseEnabled || _laserVisuallyActive)
+        if (!_mouseHook.Install())
         {
-            if (!_mouseHook.Install())
-            {
-                AppLog.Error("Could not install low-level mouse hook for cursor click pulse.");
-            }
-
-            return;
+            AppLog.Error("Could not install low-level mouse hook for pointer visuals.");
         }
-
-        _mouseHook.Uninstall();
-        ClearCursorClickPulses();
     }
 
     public bool UpdateCursorHighlight(bool force)
@@ -231,52 +228,53 @@ internal sealed class PointerVisualController : IDisposable
             return;
         }
 
-        _laserVisuallyActive = active;
-        if (!active && _trail.IsCapturingBurn)
+        if (!active && _annotations.TemporaryLaserDraft is not null)
         {
-            _trail.Clear();
+            _annotations.CommitTemporaryLaserPencil();
+            _invalidate();
         }
 
+        _laserVisuallyActive = active;
+        _leftMouseButtonDown = false;
         UpdateMouseHook();
         _stateChanged();
     }
 
     public void HandleLaserBurnMouseDown()
     {
-        if (_laserVisuallyActive)
+        if (IsLaserHoldActive(_settingsProvider().GetLaserActivationMode()))
         {
-            _trail.Clear();
-            _hasLastCursor = false;
-            _trail.BeginBurn();
+            if (_tryGetCursor(out var cursor))
+            {
+                _annotations.BeginTemporaryLaserPencil(cursor, _settingsProvider());
+            }
+
+            SetLaserVisualActive(true);
+            _setTimerInterval(_activeInterval);
+            _invalidate();
         }
     }
 
     public void HandleLaserBurnMouseUp()
     {
-        if (!_trail.IsCapturingBurn)
+        if (_annotations.TemporaryLaserDraft is null)
         {
             return;
         }
 
-        _trail.EndBurn(_clock());
+        if (_tryGetCursor(out var cursor))
+        {
+            _annotations.UpdateTemporaryLaserPencil(cursor);
+        }
+
+        _annotations.CommitTemporaryLaserPencil();
         _setTimerInterval(_fadeInterval);
         _invalidate();
     }
 
     public void TrackLaserWhileHeld(LaserActivationMode activationMode)
     {
-        if (_trail.HasBurnTrail && !_trail.IsCapturingBurn)
-        {
-            var burnNowMs = _clock();
-            if (_trail.TryGetBurnFrame(burnNowMs, out _))
-            {
-                _setTimerInterval(_fadeInterval);
-                _invalidate();
-                return;
-            }
-
-            _trail.Clear();
-        }
+        UpdateLaserBurnButtonState((NativeMethods.GetAsyncKeyState(VkLButton) & 0x8000) != 0);
 
         if (!_tryGetCursor(out var cursor))
         {
@@ -285,6 +283,10 @@ internal sealed class PointerVisualController : IDisposable
         }
 
         var nowMs = _clock();
+        if (_annotations.TemporaryLaserDraft is not null)
+        {
+            _annotations.UpdateTemporaryLaserPencil(cursor);
+        }
         if (!_hasLastCursor)
         {
             if (activationMode == LaserActivationMode.Hold)
@@ -331,21 +333,6 @@ internal sealed class PointerVisualController : IDisposable
         }
 
         var nowMs = _clock();
-        if (_trail.HasBurnTrail)
-        {
-            if (_trail.TryGetBurnFrame(nowMs, out _))
-            {
-                _setTimerInterval(_fadeInterval);
-                _invalidate();
-                return;
-            }
-
-            _trail.Clear();
-            _invalidate();
-            _setTimerInterval(_idleInterval);
-            return;
-        }
-
         var settings = _settingsProvider();
         var stationaryMs = nowMs - _trail.LastMovementMs;
         if (stationaryMs > settings.FadeDurationMs + 64)
@@ -436,6 +423,23 @@ internal sealed class PointerVisualController : IDisposable
         }
 
         if (e.IsDown)
+        {
+            UpdateLaserBurnButtonState(isDown: true);
+            return;
+        }
+
+        UpdateLaserBurnButtonState(isDown: false);
+    }
+
+    private void UpdateLaserBurnButtonState(bool isDown)
+    {
+        if (_leftMouseButtonDown == isDown)
+        {
+            return;
+        }
+
+        _leftMouseButtonDown = isDown;
+        if (isDown)
         {
             HandleLaserBurnMouseDown();
         }

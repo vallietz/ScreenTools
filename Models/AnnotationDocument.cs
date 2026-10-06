@@ -10,6 +10,7 @@ internal sealed class AnnotationDocument
     private const double HighlighterHoldThresholdMs = 480;
 
     private readonly List<AnnotationShape> _shapes = [];
+    private readonly List<AnnotationShape> _temporaryLaserStrokes = [];
     private readonly Stack<List<AnnotationShape>> _undo = new();
     private readonly Stack<List<AnnotationShape>> _redo = new();
     private readonly List<int> _selectedIndices = [];
@@ -33,6 +34,8 @@ internal sealed class AnnotationDocument
     private ScreenPoint _highlighterHoldAnchor;
 
     public IReadOnlyList<AnnotationShape> Shapes => _shapes;
+    public IReadOnlyList<AnnotationShape> TemporaryLaserStrokes => _temporaryLaserStrokes;
+    public AnnotationShape? TemporaryLaserDraft { get; private set; }
     public AnnotationShape? Draft { get; private set; }
     public ScreenRect? SelectionBounds { get; private set; }
     public ScreenRect? SelectionDraftBounds => Draft?.Tool == AnnotationTool.Move
@@ -90,6 +93,70 @@ internal sealed class AnnotationDocument
         }
 
         OnChanged();
+    }
+
+    public void BeginTemporaryLaserPencil(ScreenPoint start, AppSettings settings)
+    {
+        var durationMs = Math.Max(500, settings.LaserBurnDurationMs);
+        var fadeMs = Math.Min(1000, durationMs);
+        TemporaryLaserDraft = new AnnotationShape
+        {
+            Tool = AnnotationTool.Pencil,
+            Start = start,
+            End = start,
+            Color = WithOpacity(settings.Color, 0xB0),
+            Thickness = Math.Clamp(settings.PointSize * 0.34, 2, 18),
+            IsTemporary = true,
+            TemporaryVisibleMs = durationMs - fadeMs,
+            TemporaryFadeMs = fadeMs,
+            Points = [start]
+        };
+        OnDraftProgressed();
+    }
+
+    public void UpdateTemporaryLaserPencil(ScreenPoint current)
+    {
+        if (TemporaryLaserDraft is not { } draft)
+        {
+            return;
+        }
+
+        if (draft.Points.Count == 0 || draft.Points[^1].DistanceTo(current) >= 1.0)
+        {
+            draft.Points.Add(current);
+        }
+
+        draft.End = current;
+        OnDraftProgressed();
+    }
+
+    public void CommitTemporaryLaserPencil()
+    {
+        if (TemporaryLaserDraft is not { } draft)
+        {
+            return;
+        }
+
+        draft.MarkCreated(_clockProvider());
+        _temporaryLaserStrokes.Add(draft);
+        TemporaryLaserDraft = null;
+        OnChanged();
+    }
+
+    public bool HasFadingTemporaryLaserStrokes(double nowMs)
+    {
+        return _temporaryLaserStrokes.Any(shape => shape.IsFadeInProgress(nowMs));
+    }
+
+    public bool RemoveExpiredTemporaryLaserStrokes(double nowMs)
+    {
+        var removed = _temporaryLaserStrokes.RemoveAll(shape => shape.IsExpired(nowMs)) > 0;
+        if (removed)
+        {
+            OnChanged();
+        }
+
+        return removed;
     }
 
     public void AddPointShape(AnnotationTool tool, ScreenPoint point, AppSettings settings)
@@ -1279,6 +1346,16 @@ internal sealed class AnnotationDocument
     private void OnChanged()
     {
         Changed?.Invoke(this, EventArgs.Empty);
+    }
+
+    private static string WithOpacity(string color, byte alpha)
+    {
+        if (!AppSettings.TryParseColor(color, out var parsed))
+        {
+            parsed = System.Windows.Media.Colors.Red;
+        }
+
+        return System.Windows.Media.Color.FromArgb(alpha, parsed.R, parsed.G, parsed.B).ToString();
     }
 
     private void OnDraftProgressed()

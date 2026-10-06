@@ -185,6 +185,7 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
             TryCompletePushToAnnotateExit,
             MovementThresholdPixels);
         _pointerVisuals = new PointerVisualController(
+            _annotations,
             () => Settings,
             NowMs,
             () => _disposed,
@@ -1767,19 +1768,23 @@ internal sealed class FocusToolController : IDisposable, IOverlayInputHandler
     private bool UpdateFadingAnnotations()
     {
         var nowMs = NowMs();
-        var fadingAnnotationsAnimating = _annotations.HasFadingTemporaryAnnotations(nowMs);
-        var removedExpired = _annotations.RemoveExpiredTemporaryAnnotations(nowMs);
+        var fadingAnnotationsAnimating = _annotations.HasFadingTemporaryAnnotations(nowMs)
+            || _annotations.HasFadingTemporaryLaserStrokes(nowMs);
+        var removedExpired = _annotations.RemoveExpiredTemporaryAnnotations(nowMs)
+            || _annotations.RemoveExpiredTemporaryLaserStrokes(nowMs);
         if (fadingAnnotationsAnimating && !removedExpired)
         {
             _overlayManager?.Invalidate();
         }
 
-        return _annotations.HasFadingTemporaryAnnotations(nowMs);
+        return _annotations.HasFadingTemporaryAnnotations(nowMs)
+            || _annotations.HasFadingTemporaryLaserStrokes(nowMs);
     }
 
     private void OnAnnotationsChanged(object? sender, EventArgs e)
     {
-        if (_annotations.HasFadingTemporaryAnnotations(NowMs()))
+        if (_annotations.HasFadingTemporaryAnnotations(NowMs())
+            || _annotations.HasFadingTemporaryLaserStrokes(NowMs()))
         {
             _timer.Interval = FadeInterval;
         }

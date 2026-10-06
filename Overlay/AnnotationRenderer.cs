@@ -57,6 +57,11 @@ internal sealed class AnnotationRenderer
         }
 
         var liveShapes = new HashSet<AnnotationShape>(_annotations.Shapes);
+        liveShapes.UnionWith(_annotations.TemporaryLaserStrokes);
+        if (_annotations.TemporaryLaserDraft is { } laserDraft)
+        {
+            liveShapes.Add(laserDraft);
+        }
         foreach (var shape in _strokeGeometryCache.Keys.ToArray())
         {
             if (!liveShapes.Contains(shape))
@@ -83,6 +88,20 @@ internal sealed class AnnotationRenderer
                 var number = IsStepTool(shape.Tool) ? NextStepNumber(stepNumbersByColor, shape.Color) : (int?)null;
                 DrawShape(drawingContext, shape, isDraft: false, opacityScale, number);
             }
+        }
+
+        foreach (var shape in _annotations.TemporaryLaserStrokes)
+        {
+            var opacityScale = shape.GetOpacityScale(nowMs);
+            if (opacityScale > 0.001)
+            {
+                DrawShape(drawingContext, shape, isDraft: false, opacityScale);
+            }
+        }
+
+        if (_annotations.TemporaryLaserDraft is { } laserDraft)
+        {
+            DrawShape(drawingContext, laserDraft, isDraft: false, opacityScale: 1);
         }
 
         if (_annotations.Draft is { Tool: not AnnotationTool.Move } draft)
@@ -305,7 +324,8 @@ internal sealed class AnnotationRenderer
     private Geometry GetStrokeGeometry(AnnotationShape shape)
     {
         var smoothing = _settingsProvider().GetStrokeSmoothingLevel();
-        var isDraft = ReferenceEquals(_annotations.Draft, shape);
+        var isDraft = ReferenceEquals(_annotations.Draft, shape)
+            || ReferenceEquals(_annotations.TemporaryLaserDraft, shape);
         if (isDraft)
         {
             return shape.Tool == AnnotationTool.Highlighter
