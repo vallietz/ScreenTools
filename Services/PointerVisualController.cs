@@ -75,6 +75,7 @@ internal sealed class PointerVisualController : IDisposable
 
         _mouseHook = new MouseHook(ex => AppLog.Error("Cursor click hook callback failed.", ex));
         _mouseHook.Clicked += OnMouseHookClicked;
+        _mouseHook.ButtonChanged += OnMouseHookButtonChanged;
         UpdateMouseHook();
     }
 
@@ -111,7 +112,7 @@ internal sealed class PointerVisualController : IDisposable
             return;
         }
 
-        if (_settingsProvider().ClickPulseEnabled)
+        if (_settingsProvider().ClickPulseEnabled || _laserVisuallyActive)
         {
             if (!_mouseHook.Install())
             {
@@ -231,11 +232,52 @@ internal sealed class PointerVisualController : IDisposable
         }
 
         _laserVisuallyActive = active;
+        if (!active && _trail.IsCapturingBurn)
+        {
+            _trail.Clear();
+        }
+
+        UpdateMouseHook();
         _stateChanged();
+    }
+
+    public void HandleLaserBurnMouseDown()
+    {
+        if (_laserVisuallyActive)
+        {
+            _trail.Clear();
+            _hasLastCursor = false;
+            _trail.BeginBurn();
+        }
+    }
+
+    public void HandleLaserBurnMouseUp()
+    {
+        if (!_trail.IsCapturingBurn)
+        {
+            return;
+        }
+
+        _trail.EndBurn(_clock());
+        _setTimerInterval(_fadeInterval);
+        _invalidate();
     }
 
     public void TrackLaserWhileHeld(LaserActivationMode activationMode)
     {
+        if (_trail.HasBurnTrail && !_trail.IsCapturingBurn)
+        {
+            var burnNowMs = _clock();
+            if (_trail.TryGetBurnFrame(burnNowMs, out _))
+            {
+                _setTimerInterval(_fadeInterval);
+                _invalidate();
+                return;
+            }
+
+            _trail.Clear();
+        }
+
         if (!_tryGetCursor(out var cursor))
         {
             _setTimerInterval(_idleInterval);
@@ -288,8 +330,23 @@ internal sealed class PointerVisualController : IDisposable
             return;
         }
 
-        var settings = _settingsProvider();
         var nowMs = _clock();
+        if (_trail.HasBurnTrail)
+        {
+            if (_trail.TryGetBurnFrame(nowMs, out _))
+            {
+                _setTimerInterval(_fadeInterval);
+                _invalidate();
+                return;
+            }
+
+            _trail.Clear();
+            _invalidate();
+            _setTimerInterval(_idleInterval);
+            return;
+        }
+
+        var settings = _settingsProvider();
         var stationaryMs = nowMs - _trail.LastMovementMs;
         if (stationaryMs > settings.FadeDurationMs + 64)
         {
@@ -364,6 +421,30 @@ internal sealed class PointerVisualController : IDisposable
         _invalidate();
     }
 
+    private void OnMouseHookButtonChanged(object? sender, MouseHookButtonEventArgs e)
+    {
+        var dispatcher = System.Windows.Application.Current?.Dispatcher;
+        if (dispatcher is not null && !dispatcher.CheckAccess())
+        {
+            dispatcher.BeginInvoke(() => OnMouseHookButtonChanged(sender, e));
+            return;
+        }
+
+        if (_isDisposed() || e.Button != CursorClickButton.Left)
+        {
+            return;
+        }
+
+        if (e.IsDown)
+        {
+            HandleLaserBurnMouseDown();
+        }
+        else
+        {
+            HandleLaserBurnMouseUp();
+        }
+    }
+
     private int RetainedTrailLengthMs => _settingsProvider().TrailLengthMs;
 
     public void Dispose()
@@ -371,6 +452,7 @@ internal sealed class PointerVisualController : IDisposable
         if (_mouseHook is not null)
         {
             _mouseHook.Clicked -= OnMouseHookClicked;
+            _mouseHook.ButtonChanged -= OnMouseHookButtonChanged;
             _mouseHook.Dispose();
         }
     }

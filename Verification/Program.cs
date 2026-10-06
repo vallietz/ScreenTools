@@ -21,6 +21,9 @@ internal static class Program
             }
 
             VerifyHalfTransparentPrivacyPixel();
+            VerifyBurnTrailRetainsPathAndExpires();
+            VerifyBurnTrailStyle();
+            VerifyLaserBurnGesture();
             VerifyOpaquePrivacyPixel();
             VerifyMismatchedDimensionsFail();
             VerifyOverlaySegmentsArePlacedInSourceCoordinates();
@@ -63,6 +66,84 @@ internal static class Program
         {
             Console.Error.WriteLine(ex);
             return 1;
+        }
+    }
+
+    private static void VerifyBurnTrailRetainsPathAndExpires()
+    {
+        var trail = new TrailModel();
+        trail.AddPoint(new ScreenPoint(10, 10), 100);
+        trail.AddPoint(new ScreenPoint(20, 20), 200);
+        trail.BeginBurn();
+        trail.TrimWhileMoving(5_000, 100);
+        if (trail.Points.Count != 2)
+        {
+            throw new InvalidOperationException("A held laser burn must retain the full trail.");
+        }
+
+        trail.EndBurn(500);
+        if (!trail.TryGetBurnFrame(4_000, out var frame)
+            || Math.Abs(frame.Opacity - 0.275) > 0.001)
+        {
+            throw new InvalidOperationException("A laser burn must fade from 55 percent opacity over seven seconds.");
+        }
+
+        if (trail.TryGetBurnFrame(7_500, out _))
+        {
+            throw new InvalidOperationException("A laser burn must expire after seven seconds.");
+        }
+    }
+
+    private static void VerifyBurnTrailStyle()
+    {
+        var style = LaserTrailRenderer.ResolveStyle(
+            new BurnTrailFrame(0.55),
+            new AppSettings { Color = "#FF00FF00" });
+        if (style.Color != Colors.Red || Math.Abs(style.Opacity - 0.55) > 0.001 || style.DrawHead || style.DrawGlow)
+        {
+            throw new InvalidOperationException("A burned laser trail must be red, translucent, and headless.");
+        }
+    }
+
+    private static void VerifyLaserBurnGesture()
+    {
+        var nowMs = 1000.0;
+        using var controller = new PointerVisualController(
+            () => new AppSettings(),
+            () => nowMs,
+            () => false,
+            (out ScreenPoint point) =>
+            {
+                point = default;
+                return false;
+            },
+            _ => { },
+            () => { },
+            (_, _) => { },
+            () => { },
+            movementThresholdPixels: 1,
+            activeInterval: TimeSpan.FromMilliseconds(16),
+            fadeInterval: TimeSpan.FromMilliseconds(16),
+            idleInterval: TimeSpan.FromMilliseconds(500));
+
+        controller.HandleLaserBurnMouseDown();
+        if (controller.Trail.IsCapturingBurn)
+        {
+            throw new InvalidOperationException("Inactive laser must ignore a burn gesture.");
+        }
+
+        controller.SetLaserVisualActive(true);
+        controller.HandleLaserBurnMouseDown();
+        if (!controller.Trail.IsCapturingBurn)
+        {
+            throw new InvalidOperationException("Left mouse down must retain an active laser trail.");
+        }
+
+        nowMs += 100;
+        controller.HandleLaserBurnMouseUp();
+        if (controller.Trail.IsCapturingBurn || !controller.Trail.TryGetBurnFrame(nowMs, out _))
+        {
+            throw new InvalidOperationException("Left mouse up must start the laser burn fade.");
         }
     }
 

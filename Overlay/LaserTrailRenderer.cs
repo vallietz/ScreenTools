@@ -7,6 +7,8 @@ using WpfPoint = System.Windows.Point;
 
 namespace FocusTool.Win.Overlay;
 
+internal readonly record struct LaserTrailStyle(MediaColor Color, double Opacity, bool DrawHead, bool DrawGlow);
+
 internal sealed class LaserTrailRenderer
 {
     // Laser comet (ported from LaserMarker's TrailElement): the trail is drawn as
@@ -81,6 +83,14 @@ internal sealed class LaserTrailRenderer
 
         var settings = _settingsProvider();
         var now = _clockProvider();
+        var isBurn = _trailModel.TryGetBurnFrame(now, out var burnFrame);
+        if (!isBurn && _trailModel.LastMovementMs >= 0 && now - _trailModel.LastMovementMs > settings.FadeDurationMs + 64)
+        {
+            _trailModel.Clear();
+            return;
+        }
+
+        var style = ResolveStyle(isBurn ? burnFrame : null, settings);
         var fadeMs = Math.Max(1, settings.FadeDurationMs);
         var dot = settings.PointSize;
 
@@ -89,15 +99,20 @@ internal sealed class LaserTrailRenderer
             return;
         }
 
-        var color = settings.ToMediaColor();
+        var color = style.Color;
         var targetBlend = EstimateSpeedBlend(points, now);
         _speedBlend += (targetBlend - _speedBlend) * LaserSpeedEasing;
         var thicknessScale = Lerp(LaserSlowThicknessFactor, LaserFastThicknessFactor, _speedBlend);
-        var trailMs = Math.Max(1, settings.TrailLengthMs);
+        var trailMs = isBurn ? TrailModel.BurnFadeDurationMs : Math.Max(1, settings.TrailLengthMs);
 
         var stationary = now - _trailModel.LastMovementMs;
         double window, globalDim;
-        if (stationary <= LaserGraceMs)
+        if (isBurn)
+        {
+            window = trailMs;
+            globalDim = style.Opacity;
+        }
+        else if (stationary <= LaserGraceMs)
         {
             window = trailMs;
             globalDim = 1.0;
@@ -125,14 +140,24 @@ internal sealed class LaserTrailRenderer
         for (var i = 0; i < count; i++)
         {
             local[i] = _toLocal(points[i]);
-            life[i] = 1.0 - (now - points[i].TimeMs) / window;
+            life[i] = isBurn ? 1.0 : 1.0 - (now - points[i].TimeMs) / window;
         }
 
         var headDirection = EstimateHeadDirection(local, count);
         var pulse = 1 + 0.30 * _speedBlend;
         var colorOpacity = color.A / 255.0;
-        DrawLaserBands(drawingContext, points, local, life, globalDim, color, colorOpacity, dot, thicknessScale, pulse, settings.GlowEnabled);
-        DrawLaserHead(drawingContext, local[count - 1], globalDim, color, colorOpacity, dot, _speedBlend, pulse, headDirection, settings.GlowEnabled);
+        DrawLaserBands(drawingContext, points, local, life, globalDim, color, colorOpacity, dot, thicknessScale, pulse, style.DrawGlow);
+        if (style.DrawHead)
+        {
+            DrawLaserHead(drawingContext, local[count - 1], globalDim, color, colorOpacity, dot, _speedBlend, pulse, headDirection, style.DrawGlow);
+        }
+    }
+
+    internal static LaserTrailStyle ResolveStyle(BurnTrailFrame? burnFrame, AppSettings settings)
+    {
+        return burnFrame is { } burn
+            ? new LaserTrailStyle(Colors.Red, burn.Opacity, DrawHead: false, DrawGlow: false)
+            : new LaserTrailStyle(settings.ToMediaColor(), Opacity: 1, DrawHead: true, DrawGlow: settings.GlowEnabled);
     }
 
     private void DrawLaserBands(
