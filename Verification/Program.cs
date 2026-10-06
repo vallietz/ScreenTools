@@ -50,6 +50,7 @@ internal static class Program
             VerifyQuickEditDraftSelectionMaskEligibility();
             VerifyQuickEditSelectionCursor();
             VerifyQuickEditPaletteAndGestureTools();
+            VerifyQuickEditPencilSmoothing();
             VerifyCurvedArrowGeometry();
             VerifyEditableCurvedAnnotationArrow();
             VerifyEditableQuickEditArrow();
@@ -229,6 +230,26 @@ internal static class Program
             throw new InvalidOperationException("Laser pencil tail must dissolve progressively after fade-out begins.");
         }
 
+    }
+
+    private static void VerifyQuickEditPencilSmoothing()
+    {
+        var raw = new[]
+        {
+            new ScreenPoint(0, 0),
+            new ScreenPoint(20, 4),
+            new ScreenPoint(40, -4),
+            new ScreenPoint(60, 4),
+            new ScreenPoint(80, 0)
+        };
+        var smoothed = QuickEditStrokeGeometry.Smooth(raw);
+        if (smoothed[0] != raw[0]
+            || smoothed[^1] != raw[^1]
+            || smoothed.Skip(1).SkipLast(1).Average(point => Math.Abs(point.Y))
+                >= raw.Skip(1).SkipLast(1).Average(point => Math.Abs(point.Y)))
+        {
+            throw new InvalidOperationException("Quick Edit pencil must use the same smooth stroke geometry as annotations.");
+        }
     }
 
     private static void VerifyQuickEditObjectEditingAndHistory()
