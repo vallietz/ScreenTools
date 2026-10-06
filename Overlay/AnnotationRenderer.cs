@@ -343,12 +343,10 @@ internal sealed class AnnotationRenderer
             return;
         }
 
-        const double fadeEdge = 0.18;
         var segmentCount = points.Count - 1;
         for (var index = 1; index < points.Count; index++)
         {
-            var position = index / (double)segmentCount;
-            var opacity = Math.Clamp((position - fadeProgress) / fadeEdge, 0, 1);
+            var opacity = GetTailDissolveOpacity(index - 1, segmentCount, fadeProgress);
             if (opacity <= 0.001)
             {
                 continue;
@@ -363,7 +361,7 @@ internal sealed class AnnotationRenderer
 
     private Geometry GetStrokeGeometry(AnnotationShape shape)
     {
-        var smoothing = _settingsProvider().GetStrokeSmoothingLevel();
+        var smoothing = ResolveStrokeSmoothing(shape.Tool, _settingsProvider().GetStrokeSmoothingLevel());
         var isDraft = ReferenceEquals(_annotations.Draft, shape)
             || ReferenceEquals(_annotations.TemporaryLaserDraft, shape);
         if (isDraft)
@@ -388,6 +386,32 @@ internal sealed class AnnotationRenderer
             smoothing,
             geometry);
         return geometry;
+    }
+
+    internal static StrokeSmoothingLevel ResolveStrokeSmoothing(AnnotationTool tool, StrokeSmoothingLevel configured)
+    {
+        return tool is AnnotationTool.Pencil or AnnotationTool.Highlighter
+            ? StrokeSmoothingLevel.Balanced
+            : configured;
+    }
+
+    internal static double GetTailDissolveOpacity(int segmentIndex, int segmentCount, double fadeProgress)
+    {
+        if (segmentCount <= 0 || fadeProgress <= 0)
+        {
+            return 1;
+        }
+
+        var position = Math.Clamp((segmentIndex + 1) / (double)segmentCount, 0, 1);
+        var noise = ((uint)(segmentIndex * 1_103_515_245 + 12_345) & 0x7fff_ffff) / (double)int.MaxValue;
+        var delay = position * 0.48 + noise * 0.16;
+        var dissolve = Math.Clamp((fadeProgress - delay) / 0.52, 0, 1);
+        return 1 - SmoothStep(dissolve);
+    }
+
+    private static double SmoothStep(double value)
+    {
+        return value * value * (3 - 2 * value);
     }
 
     private Geometry BuildStrokeGeometry(AnnotationShape shape, StrokeSmoothingLevel smoothing, bool finalize)

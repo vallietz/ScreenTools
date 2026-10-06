@@ -35,6 +35,7 @@ internal static class Program
             VerifyObjectEraserGestureUndoRedo();
             VerifyPushToAnnotateUsesLatchedShortcutComponents();
             VerifyStrokeSmoothingPreservesEndpointsAndCorners();
+            VerifyPencilUsesBalancedSmoothing();
             VerifyHighlighterUsesFixedRectangularNib();
             VerifyHighlighterDrawAndHoldLocksAndTracksEndpoint();
             VerifyStaticPinAspectRatioSizing();
@@ -726,6 +727,28 @@ internal static class Program
         if (stabilizedNoise >= rawNoise * 0.4)
         {
             throw new InvalidOperationException("Strong final smoothing did not suppress high-frequency pointer noise.");
+        }
+    }
+
+    private static void VerifyPencilUsesBalancedSmoothing()
+    {
+        if (AnnotationRenderer.ResolveStrokeSmoothing(AnnotationTool.Pencil, StrokeSmoothingLevel.Off)
+            != StrokeSmoothingLevel.Balanced)
+        {
+            throw new InvalidOperationException("Pencil must use the same balanced smoothing as the laser trace.");
+        }
+
+        if (AnnotationRenderer.ResolveStrokeSmoothing(AnnotationTool.Highlighter, StrokeSmoothingLevel.Off)
+            != StrokeSmoothingLevel.Balanced)
+        {
+            throw new InvalidOperationException("Highlighter must use the same balanced smoothing as the laser trace.");
+        }
+
+        var tailOpacity = AnnotationRenderer.GetTailDissolveOpacity(segmentIndex: 1, segmentCount: 20, fadeProgress: 0.5);
+        var headOpacity = AnnotationRenderer.GetTailDissolveOpacity(segmentIndex: 19, segmentCount: 20, fadeProgress: 0.5);
+        if (tailOpacity >= headOpacity || tailOpacity <= 0)
+        {
+            throw new InvalidOperationException("Laser trace must dissolve its tail progressively without moving the path.");
         }
     }
 
