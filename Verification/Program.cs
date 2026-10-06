@@ -186,6 +186,21 @@ internal static class Program
             throw new InvalidOperationException("Laser pencil must reuse the pencil geometry and laser color.");
         }
 
+        var speedDocument = new AnnotationDocument(() => nowMs);
+        var speedSettings = new AppSettings
+        {
+            LaserBurnDurationMs = 7000,
+            LaserBurnDissolveSpeedPixelsPerSecond = 100
+        };
+        speedDocument.BeginTemporaryLaserPencil(new ScreenPoint(0, 0), speedSettings);
+        speedDocument.UpdateTemporaryLaserPencil(new ScreenPoint(100, 0));
+        speedDocument.CommitTemporaryLaserPencil();
+        var speedStroke = speedDocument.TemporaryLaserStrokes.Single();
+        if (speedStroke.TemporaryVisibleMs != 6000 || speedStroke.TemporaryFadeMs != 1000)
+        {
+            throw new InvalidOperationException("Laser dissolve speed must convert the stroke length into fade travel time.");
+        }
+
         nowMs += 6999;
         if (document.RemoveExpiredTemporaryLaserStrokes(nowMs) || document.TemporaryLaserStrokes.Count != 1)
         {
@@ -198,9 +213,8 @@ internal static class Program
             throw new InvalidOperationException("Laser pencil must disappear automatically after N seconds.");
         }
 
-        document.BeginTemporaryLaserPencil(new ScreenPoint(0, 0), settings);
-        document.UpdateTemporaryLaserPencil(new ScreenPoint(10, 0));
-        document.UpdateTemporaryLaserPencil(new ScreenPoint(20, 0));
+        document.BeginTemporaryLaserPencil(new ScreenPoint(0, 0), speedSettings);
+        document.UpdateTemporaryLaserPencil(new ScreenPoint(100, 0));
         document.CommitTemporaryLaserPencil();
         nowMs += 6000;
         var fadingStroke = document.TemporaryLaserStrokes.Single();
@@ -746,7 +760,9 @@ internal static class Program
 
         var tailOpacity = AnnotationRenderer.GetTailDissolveOpacity(segmentIndex: 1, segmentCount: 20, fadeProgress: 0.5);
         var headOpacity = AnnotationRenderer.GetTailDissolveOpacity(segmentIndex: 19, segmentCount: 20, fadeProgress: 0.5);
-        if (tailOpacity >= headOpacity || tailOpacity is < 0.35 or > 0.65)
+        if (tailOpacity >= headOpacity
+            || tailOpacity is < 0.35 or > 0.65
+            || headOpacity - tailOpacity < 0.25)
         {
             throw new InvalidOperationException("Laser trace tail must dissolve continuously without stepping between segments.");
         }

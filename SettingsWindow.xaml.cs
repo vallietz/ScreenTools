@@ -54,6 +54,7 @@ public partial class SettingsWindow : Window
         TrailLengthSlider.Value = settings.TrailLengthMs;
         FadeDurationSlider.Value = settings.FadeDurationMs;
         LaserBurnDurationSlider.Value = settings.LaserBurnDurationMs / 1000.0;
+        LaserBurnDissolveSpeedSlider.Value = settings.LaserBurnDissolveSpeedPixelsPerSecond;
         GlowCheckBox.IsChecked = settings.GlowEnabled;
         SelectLaserActivationMode(settings.GetLaserActivationMode());
         SelectCursorHighlightActivationMode(settings.GetCursorHighlightActivationMode());
@@ -241,6 +242,7 @@ public partial class SettingsWindow : Window
         updated.TrailLengthMs = (int)TrailLengthSlider.Value;
         updated.FadeDurationMs = (int)FadeDurationSlider.Value;
         updated.LaserBurnDurationMs = (int)Math.Round(LaserBurnDurationSlider.Value * 1000);
+        updated.LaserBurnDissolveSpeedPixelsPerSecond = LaserBurnDissolveSpeedSlider.Value;
         updated.GlowEnabled = GlowCheckBox.IsChecked == true;
         updated.SetLaserActivationMode(ReadLaserActivationMode());
         updated.SetCursorHighlightActivationMode(ReadCursorHighlightActivationMode());
@@ -345,6 +347,7 @@ public partial class SettingsWindow : Window
             || TrailLengthValue is null
             || FadeDurationValue is null
             || LaserBurnDurationValue is null
+            || LaserBurnDissolveSpeedValue is null
             || CursorHighlightRadiusValue is null
             || CursorHighlightThicknessValue is null
             || SpotlightRadiusValue is null
@@ -366,6 +369,7 @@ public partial class SettingsWindow : Window
         TrailLengthValue.Text = $"{TrailLengthSlider.Value:0} ms";
         FadeDurationValue.Text = $"{FadeDurationSlider.Value:0} ms";
         LaserBurnDurationValue.Text = $"{LaserBurnDurationSlider.Value:0}s";
+        LaserBurnDissolveSpeedValue.Text = $"{LaserBurnDissolveSpeedSlider.Value:0} px/s";
         CursorHighlightRadiusValue.Text = $"{CursorHighlightRadiusSlider.Value:0}px";
         CursorHighlightThicknessValue.Text = $"{CursorHighlightThicknessSlider.Value:0}px";
         SpotlightRadiusValue.Text = $"{SpotlightRadiusSlider.Value:0}px";

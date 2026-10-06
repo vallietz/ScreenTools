@@ -109,6 +109,8 @@ internal sealed class AnnotationDocument
             IsTemporary = true,
             TemporaryVisibleMs = durationMs - fadeMs,
             TemporaryFadeMs = fadeMs,
+            TemporaryLifetimeMs = durationMs,
+            TemporaryDissolveSpeedPixelsPerSecond = settings.LaserBurnDissolveSpeedPixelsPerSecond,
             Points = [start]
         };
         OnDraftProgressed();
@@ -137,6 +139,11 @@ internal sealed class AnnotationDocument
             return;
         }
 
+        var pathLength = PathLength(draft.Points);
+        var speed = Math.Max(50, draft.TemporaryDissolveSpeedPixelsPerSecond);
+        var fadeMs = Math.Max(100, (int)Math.Round(pathLength / speed * 1000));
+        draft.TemporaryFadeMs = fadeMs;
+        draft.TemporaryVisibleMs = Math.Max(0, draft.TemporaryLifetimeMs - fadeMs);
         draft.MarkCreated(_clockProvider());
         _temporaryLaserStrokes.Add(draft);
         TemporaryLaserDraft = null;
@@ -1356,6 +1363,17 @@ internal sealed class AnnotationDocument
         }
 
         return System.Windows.Media.Color.FromArgb(alpha, parsed.R, parsed.G, parsed.B).ToString();
+    }
+
+    private static double PathLength(IReadOnlyList<ScreenPoint> points)
+    {
+        var length = 0.0;
+        for (var index = 1; index < points.Count; index++)
+        {
+            length += points[index - 1].DistanceTo(points[index]);
+        }
+
+        return length;
     }
 
     private void OnDraftProgressed()

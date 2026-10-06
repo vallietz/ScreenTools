@@ -154,6 +154,12 @@
                                 </DockPanel>
                                 <Slider x:Name="LaserBurnDurationSlider" Minimum="1" Maximum="30" TickFrequency="1" IsSnapToTickEnabled="True" ValueChanged="Slider_OnValueChanged" />
 
+                                <DockPanel Margin="0,10,0,0" LastChildFill="False">
+                                    <TextBlock Text="Burn dissolve speed" Style="{StaticResource FieldLabelTextStyle}" />
+                                    <TextBlock x:Name="LaserBurnDissolveSpeedValue" DockPanel.Dock="Right" Margin="12,0,0,0" />
+                                </DockPanel>
+                                <Slider x:Name="LaserBurnDissolveSpeedSlider" Minimum="50" Maximum="1500" TickFrequency="25" IsSnapToTickEnabled="True" ValueChanged="Slider_OnValueChanged" />
+
                                 <CheckBox x:Name="GlowCheckBox" Content="Glow" Margin="0,10,0,0" />
                             </StackPanel>
                         </GroupBox>

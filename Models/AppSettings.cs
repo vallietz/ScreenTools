@@ -40,6 +40,7 @@ public sealed class AppSettings
     public int TrailLengthMs { get; set; } = 400;
     public int FadeDurationMs { get; set; } = 500;
     public int LaserBurnDurationMs { get; set; } = 7000;
+    public double LaserBurnDissolveSpeedPixelsPerSecond { get; set; } = 350;
     public bool GlowEnabled { get; set; } = true;
     public string LaserActivationMode { get; set; } = FocusTool.Win.Models.LaserActivationMode.Hold.ToString();
     public string LaserHoldShortcut { get; set; } = "Alt+Z";
@@ -87,6 +88,7 @@ public sealed class AppSettings
         TrailLengthMs = TrailLengthMs,
         FadeDurationMs = FadeDurationMs,
         LaserBurnDurationMs = LaserBurnDurationMs,
+        LaserBurnDissolveSpeedPixelsPerSecond = LaserBurnDissolveSpeedPixelsPerSecond,
         GlowEnabled = GlowEnabled,
         LaserActivationMode = LaserActivationMode,
         LaserHoldShortcut = LaserHoldShortcut,
@@ -132,6 +134,7 @@ public sealed class AppSettings
         TrailLengthMs = other.TrailLengthMs;
         FadeDurationMs = other.FadeDurationMs;
         LaserBurnDurationMs = other.LaserBurnDurationMs;
+        LaserBurnDissolveSpeedPixelsPerSecond = other.LaserBurnDissolveSpeedPixelsPerSecond;
         GlowEnabled = other.GlowEnabled;
         LaserActivationMode = other.LaserActivationMode;
         LaserHoldShortcut = other.LaserHoldShortcut;
@@ -236,6 +239,7 @@ public sealed class AppSettings
         TrailLengthMs = Math.Clamp(TrailLengthMs, 80, 3000);
         FadeDurationMs = Math.Clamp(FadeDurationMs, 80, 3000);
         LaserBurnDurationMs = Math.Clamp(LaserBurnDurationMs, 500, 60000);
+        LaserBurnDissolveSpeedPixelsPerSecond = Math.Clamp(LaserBurnDissolveSpeedPixelsPerSecond, 50, 3000);
         CursorHighlightRadius = Math.Clamp(CursorHighlightRadius, 12, 96);
         CursorHighlightThickness = Math.Clamp(CursorHighlightThickness, 1, 12);
         SpotlightRadius = Math.Clamp(SpotlightRadius, 48, 480);
