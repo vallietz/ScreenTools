@@ -17,6 +17,7 @@ internal sealed class MouseHook : IDisposable
     }
 
     public event EventHandler<MouseHookClickEventArgs>? Clicked;
+    public event EventHandler<MouseHookButtonEventArgs>? ButtonChanged;
     public event EventHandler<MouseHookWheelEventArgs>? Wheel;
 
     public bool IsInstalled => _hook != IntPtr.Zero;
@@ -76,6 +77,19 @@ internal sealed class MouseHook : IDisposable
                     Clicked?.Invoke(
                         this,
                         new MouseHookClickEventArgs(button, new ScreenPoint(data.Point.X, data.Point.Y)));
+                    ButtonChanged?.Invoke(
+                        this,
+                        new MouseHookButtonEventArgs(button, isDown: true, new ScreenPoint(data.Point.X, data.Point.Y)));
+                }
+                else if (message is NativeMethods.WmLButtonUp or NativeMethods.WmRButtonUp)
+                {
+                    var data = Marshal.PtrToStructure<NativeMethods.MouseHookStruct>(lParam);
+                    var button = message == NativeMethods.WmRButtonUp
+                        ? CursorClickButton.Right
+                        : CursorClickButton.Left;
+                    ButtonChanged?.Invoke(
+                        this,
+                        new MouseHookButtonEventArgs(button, isDown: false, new ScreenPoint(data.Point.X, data.Point.Y)));
                 }
                 else if (message == NativeMethods.WmMouseWheel)
                 {
@@ -120,6 +134,20 @@ internal sealed class MouseHookClickEventArgs : EventArgs
     }
 
     public CursorClickButton Button { get; }
+    public ScreenPoint Point { get; }
+}
+
+internal sealed class MouseHookButtonEventArgs : EventArgs
+{
+    public MouseHookButtonEventArgs(CursorClickButton button, bool isDown, ScreenPoint point)
+    {
+        Button = button;
+        IsDown = isDown;
+        Point = point;
+    }
+
+    public CursorClickButton Button { get; }
+    public bool IsDown { get; }
     public ScreenPoint Point { get; }
 }
 

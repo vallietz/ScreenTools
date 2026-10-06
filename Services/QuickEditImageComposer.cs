@@ -102,13 +102,9 @@ internal static class QuickEditImageComposer
                 return;
             default:
                 if (stroke.Points.Count < 2) return;
-                var polyline = new StreamGeometry();
-                using (var path = polyline.Open())
-                {
-                    path.BeginFigure(start, false, false);
-                    path.PolyLineTo(stroke.Points.Skip(1).Select(Local).ToArray(), true, true);
-                }
-                polyline.Freeze();
+                var polyline = stroke.Tool is QuickEditTool.Pencil or QuickEditTool.Highlighter
+                    ? QuickEditStrokeGeometry.BuildSmoothGeometry(stroke.Points, Local)
+                    : BuildPolyline(stroke.Points, Local);
                 var highlighter = stroke.Tool == QuickEditTool.Highlighter;
                 var pen = highlighter
                     ? new Pen(new SolidColorBrush(Color.FromArgb(97, 255, 255, 0)), 18)
@@ -116,5 +112,18 @@ internal static class QuickEditImageComposer
                 context.DrawGeometry(null, pen, polyline);
                 return;
         }
+    }
+
+    private static Geometry BuildPolyline(IReadOnlyList<ScreenPoint> points, Func<ScreenPoint, Point> toLocal)
+    {
+        var geometry = new StreamGeometry();
+        using (var path = geometry.Open())
+        {
+            path.BeginFigure(toLocal(points[0]), false, false);
+            path.PolyLineTo(points.Skip(1).Select(toLocal).ToArray(), true, true);
+        }
+
+        geometry.Freeze();
+        return geometry;
     }
 }

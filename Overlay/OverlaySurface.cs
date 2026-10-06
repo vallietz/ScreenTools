@@ -489,13 +489,9 @@ internal sealed class OverlaySurface : FrameworkElement
                 continue;
             }
 
-            var geometry = new StreamGeometry();
-            using (var context = geometry.Open())
-            {
-                context.BeginFigure(ToLocal(points[0]), false, false);
-                context.PolyLineTo(points.Skip(1).Select(ToLocal).ToArray(), true, true);
-            }
-            geometry.Freeze();
+            var geometry = stroke.Tool is QuickEditTool.Pencil or QuickEditTool.Highlighter
+                ? QuickEditStrokeGeometry.BuildSmoothGeometry(points, ToLocal)
+                : BuildQuickEditPolyline(points);
             var isHighlighter = stroke.Tool == QuickEditTool.Highlighter;
             drawingContext.DrawGeometry(null,
                 CreatePen(isHighlighter ? Colors.Yellow : Colors.Red, isHighlighter ? 0.38 : 1, isHighlighter ? 18 : 3),
@@ -527,6 +523,19 @@ internal sealed class OverlaySurface : FrameworkElement
                     drawingContext.DrawEllipse(GetBrush(Colors.LimeGreen, 1), CreatePen(Colors.DarkGreen, 1, 1), ToLocal(handle), 5, 5);
             }
         }
+    }
+
+    private Geometry BuildQuickEditPolyline(IReadOnlyList<ScreenPoint> points)
+    {
+        var geometry = new StreamGeometry();
+        using (var context = geometry.Open())
+        {
+            context.BeginFigure(ToLocal(points[0]), false, false);
+            context.PolyLineTo(points.Skip(1).Select(ToLocal).ToArray(), true, true);
+        }
+
+        geometry.Freeze();
+        return geometry;
     }
 
     private void DrawQuickEditPalette(DrawingContext drawingContext, ScreenRect selection)

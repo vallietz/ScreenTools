@@ -57,6 +57,11 @@ internal sealed class AnnotationRenderer
         }
 
         var liveShapes = new HashSet<AnnotationShape>(_annotations.Shapes);
+        liveShapes.UnionWith(_annotations.TemporaryLaserStrokes);
+        if (_annotations.TemporaryLaserDraft is { } laserDraft)
+        {
+            liveShapes.Add(laserDraft);
+        }
         foreach (var shape in _strokeGeometryCache.Keys.ToArray())
         {
             if (!liveShapes.Contains(shape))
@@ -83,6 +88,16 @@ internal sealed class AnnotationRenderer
                 var number = IsStepTool(shape.Tool) ? NextStepNumber(stepNumbersByColor, shape.Color) : (int?)null;
                 DrawShape(drawingContext, shape, isDraft: false, opacityScale, number);
             }
+        }
+
+        foreach (var shape in _annotations.TemporaryLaserStrokes)
+        {
+            DrawTemporaryLaserPencil(drawingContext, shape, nowMs);
+        }
+
+        if (_annotations.TemporaryLaserDraft is { } laserDraft)
+        {
+            DrawTemporaryLaserPencil(drawingContext, laserDraft, nowMs);
         }
 
         if (_annotations.Draft is { Tool: not AnnotationTool.Move } draft)
@@ -302,10 +317,53 @@ internal sealed class AnnotationRenderer
         drawingContext.DrawGeometry(null, pen, GetStrokeGeometry(shape));
     }
 
+    private void DrawTemporaryLaserPencil(DrawingContext drawingContext, AnnotationShape shape, double nowMs)
+    {
+        if (shape.Points.Count == 0)
+        {
+            return;
+        }
+
+        var color = AppSettings.TryParseColor(shape.Color, out var parsedColor)
+            ? parsedColor
+            : Colors.Red;
+        if (shape.Points.Count == 1)
+        {
+            var pen = _createPen(color, 0.95 * (1 - shape.GetTemporaryTailFadeProgress(nowMs)), shape.Thickness);
+            var center = _toLocal(shape.Points[0]);
+            drawingContext.DrawEllipse(pen.Brush, null, center, pen.Thickness / 2, pen.Thickness / 2);
+            return;
+        }
+
+        var points = AnnotationStrokeGeometry.Smooth(shape.Points, StrokeSmoothingLevel.Balanced, finalize: false);
+        var fadeProgress = shape.GetTemporaryTailFadeProgress(nowMs);
+        if (fadeProgress <= 0)
+        {
+            drawingContext.DrawGeometry(null, _createPen(color, 0.95, shape.Thickness), BuildStrokeGeometry(shape, StrokeSmoothingLevel.Balanced, finalize: false));
+            return;
+        }
+
+        var segmentCount = points.Count - 1;
+        for (var index = 1; index < points.Count; index++)
+        {
+            var opacity = GetTailDissolveOpacity(index - 1, segmentCount, fadeProgress);
+            if (opacity <= 0.001)
+            {
+                continue;
+            }
+
+            drawingContext.DrawLine(
+                _createPen(color, 0.95 * opacity, shape.Thickness),
+                _toLocal(points[index - 1]),
+                _toLocal(points[index]));
+        }
+    }
+
     private Geometry GetStrokeGeometry(AnnotationShape shape)
     {
-        var smoothing = _settingsProvider().GetStrokeSmoothingLevel();
-        var isDraft = ReferenceEquals(_annotations.Draft, shape);
+        var smoothing = ResolveStrokeSmoothing(shape.Tool, _settingsProvider().GetStrokeSmoothingLevel());
+        var isDraft = ReferenceEquals(_annotations.Draft, shape)
+            || ReferenceEquals(_annotations.TemporaryLaserDraft, shape);
         if (isDraft)
         {
             return shape.Tool == AnnotationTool.Highlighter
@@ -328,6 +386,31 @@ internal sealed class AnnotationRenderer
             smoothing,
             geometry);
         return geometry;
+    }
+
+    internal static StrokeSmoothingLevel ResolveStrokeSmoothing(AnnotationTool tool, StrokeSmoothingLevel configured)
+    {
+        return tool is AnnotationTool.Pencil or AnnotationTool.Highlighter
+            ? StrokeSmoothingLevel.Balanced
+            : configured;
+    }
+
+    internal static double GetTailDissolveOpacity(int segmentIndex, int segmentCount, double fadeProgress)
+    {
+        if (segmentCount <= 0 || fadeProgress <= 0)
+        {
+            return 1;
+        }
+
+        var position = Math.Clamp((segmentIndex + 1) / (double)segmentCount, 0, 1);
+        var dissolve = fadeProgress * (1 - position)
+            + Math.Pow(fadeProgress, 4) * position;
+        return 1 - SmoothStep(dissolve);
+    }
+
+    private static double SmoothStep(double value)
+    {
+        return value * value * (3 - 2 * value);
     }
 
     private Geometry BuildStrokeGeometry(AnnotationShape shape, StrokeSmoothingLevel smoothing, bool finalize)

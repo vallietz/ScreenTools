@@ -27,6 +27,10 @@ internal static class Program
             }
 
             VerifyHalfTransparentPrivacyPixel();
+            VerifyBurnTrailRetainsPathAndExpires();
+            VerifyBurnTrailStyle();
+            VerifyLaserBurnGesture();
+            VerifyTemporaryLaserPencilIsNotAnAnnotation();
             VerifyOpaquePrivacyPixel();
             VerifyMismatchedDimensionsFail();
             VerifyOverlaySegmentsArePlacedInSourceCoordinates();
@@ -37,6 +41,7 @@ internal static class Program
             VerifyObjectEraserGestureUndoRedo();
             VerifyPushToAnnotateUsesLatchedShortcutComponents();
             VerifyStrokeSmoothingPreservesEndpointsAndCorners();
+            VerifyPencilUsesBalancedSmoothing();
             VerifyHighlighterUsesFixedRectangularNib();
             VerifyHighlighterDrawAndHoldLocksAndTracksEndpoint();
             VerifyStaticPinAspectRatioSizing();
@@ -51,6 +56,7 @@ internal static class Program
             VerifyQuickEditDraftSelectionMaskEligibility();
             VerifyQuickEditSelectionCursor();
             VerifyQuickEditPaletteAndGestureTools();
+            VerifyQuickEditPencilSmoothing();
             VerifyCurvedArrowGeometry();
             VerifyEditableCurvedAnnotationArrow();
             VerifyEditableQuickEditArrow();
@@ -78,6 +84,186 @@ internal static class Program
         {
             Console.Error.WriteLine(ex);
             return 1;
+        }
+    }
+
+    private static void VerifyBurnTrailRetainsPathAndExpires()
+    {
+        var trail = new TrailModel();
+        trail.AddPoint(new ScreenPoint(10, 10), 100);
+        trail.AddPoint(new ScreenPoint(20, 20), 200);
+        trail.BeginBurn();
+        trail.TrimWhileMoving(5_000, 100);
+        if (trail.Points.Count != 2)
+        {
+            throw new InvalidOperationException("A held laser burn must retain the full trail.");
+        }
+
+        trail.EndBurn(500);
+        if (!trail.TryGetBurnFrame(4_000, out var frame)
+            || Math.Abs(frame.Opacity - 0.275) > 0.001)
+        {
+            throw new InvalidOperationException("A laser burn must fade from 55 percent opacity over seven seconds.");
+        }
+
+        if (trail.TryGetBurnFrame(7_500, out _))
+        {
+            throw new InvalidOperationException("A laser burn must expire after seven seconds.");
+        }
+    }
+
+    private static void VerifyBurnTrailStyle()
+    {
+        var style = LaserTrailRenderer.ResolveStyle(
+            new BurnTrailFrame(0.55),
+            new AppSettings { Color = "#FF00FF00" });
+        if (style.Color != Colors.Red || Math.Abs(style.Opacity - 0.55) > 0.001 || style.DrawHead || style.DrawGlow)
+        {
+            throw new InvalidOperationException("A burned laser trail must be red, translucent, and headless.");
+        }
+    }
+
+    private static void VerifyLaserBurnGesture()
+    {
+        var nowMs = 1000.0;
+        var settings = new AppSettings { LaserActivationMode = LaserActivationMode.Hold.ToString() };
+        var annotations = new AnnotationDocument(() => nowMs);
+        using var controller = new PointerVisualController(
+            annotations,
+            () => settings,
+            () => nowMs,
+            () => false,
+            (out ScreenPoint point) =>
+            {
+                point = new ScreenPoint(40, 60);
+                return true;
+            },
+            _ => { },
+            () => { },
+            (_, _) => { },
+            () => { },
+            movementThresholdPixels: 1,
+            activeInterval: TimeSpan.FromMilliseconds(16),
+            fadeInterval: TimeSpan.FromMilliseconds(16),
+            idleInterval: TimeSpan.FromMilliseconds(500));
+
+        controller.HandleLaserBurnMouseDown();
+        if (annotations.TemporaryLaserDraft is not null)
+        {
+            throw new InvalidOperationException("Inactive laser must ignore a burn gesture.");
+        }
+
+        settings.LaserActivationMode = LaserActivationMode.Always.ToString();
+        controller.SetLaserVisualActive(true);
+        controller.HandleLaserBurnMouseDown();
+        if (annotations.TemporaryLaserDraft is null)
+        {
+            throw new InvalidOperationException("Left mouse down must retain an active laser trail.");
+        }
+
+        nowMs += 100;
+        controller.HandleLaserBurnMouseUp();
+        if (annotations.TemporaryLaserDraft is not null || annotations.TemporaryLaserStrokes.Count != 1)
+        {
+            throw new InvalidOperationException("Left mouse up must start the laser burn fade.");
+        }
+
+        controller.SetLaserVisualActive(true);
+        controller.HandleLaserBurnMouseDown();
+        nowMs += 100;
+        controller.SetLaserVisualActive(false);
+        if (annotations.TemporaryLaserStrokes.Count != 2)
+        {
+            throw new InvalidOperationException("Leaving laser mode must fade an active burn instead of clearing it.");
+        }
+    }
+
+    private static void VerifyTemporaryLaserPencilIsNotAnAnnotation()
+    {
+        var nowMs = 1000.0;
+        var document = new AnnotationDocument(() => nowMs);
+        var settings = new AppSettings { LaserBurnDurationMs = 7000 };
+
+        document.BeginTemporaryLaserPencil(new ScreenPoint(10, 20), settings);
+        document.UpdateTemporaryLaserPencil(new ScreenPoint(80, 90));
+        document.CommitTemporaryLaserPencil();
+
+        if (document.Shapes.Count != 0 || document.TemporaryLaserStrokes.Count != 1)
+        {
+            throw new InvalidOperationException("Laser pencil must stay outside the editable annotation document.");
+        }
+
+        var stroke = document.TemporaryLaserStrokes.Single();
+        if (stroke.Tool != AnnotationTool.Pencil
+            || !AppSettings.TryParseColor(stroke.Color, out var strokeColor)
+            || strokeColor.A >= 255
+            || stroke.Points.Count != 2)
+        {
+            throw new InvalidOperationException("Laser pencil must reuse the pencil geometry and laser color.");
+        }
+
+        var speedDocument = new AnnotationDocument(() => nowMs);
+        var speedSettings = new AppSettings
+        {
+            LaserBurnDurationMs = 7000,
+            LaserBurnDissolveSpeedPixelsPerSecond = 100
+        };
+        speedDocument.BeginTemporaryLaserPencil(new ScreenPoint(0, 0), speedSettings);
+        speedDocument.UpdateTemporaryLaserPencil(new ScreenPoint(100, 0));
+        speedDocument.CommitTemporaryLaserPencil();
+        var speedStroke = speedDocument.TemporaryLaserStrokes.Single();
+        if (speedStroke.TemporaryVisibleMs != 6000 || speedStroke.TemporaryFadeMs != 1000)
+        {
+            throw new InvalidOperationException("Laser dissolve speed must convert the stroke length into fade travel time.");
+        }
+
+        nowMs += 6999;
+        if (document.RemoveExpiredTemporaryLaserStrokes(nowMs) || document.TemporaryLaserStrokes.Count != 1)
+        {
+            throw new InvalidOperationException("Laser pencil must remain visible for the configured N seconds.");
+        }
+
+        nowMs += 1;
+        if (!document.RemoveExpiredTemporaryLaserStrokes(nowMs) || document.TemporaryLaserStrokes.Count != 0)
+        {
+            throw new InvalidOperationException("Laser pencil must disappear automatically after N seconds.");
+        }
+
+        document.BeginTemporaryLaserPencil(new ScreenPoint(0, 0), speedSettings);
+        document.UpdateTemporaryLaserPencil(new ScreenPoint(100, 0));
+        document.CommitTemporaryLaserPencil();
+        nowMs += 6000;
+        var fadingStroke = document.TemporaryLaserStrokes.Single();
+        if (fadingStroke.GetTemporaryTailFadeProgress(nowMs) != 0)
+        {
+            throw new InvalidOperationException("Laser pencil must keep its complete path before fade-out begins.");
+        }
+
+        nowMs += 500;
+        if (Math.Abs(fadingStroke.GetTemporaryTailFadeProgress(nowMs) - 0.5) > 0.001)
+        {
+            throw new InvalidOperationException("Laser pencil tail must dissolve progressively after fade-out begins.");
+        }
+
+    }
+
+    private static void VerifyQuickEditPencilSmoothing()
+    {
+        var raw = new[]
+        {
+            new ScreenPoint(0, 0),
+            new ScreenPoint(20, 4),
+            new ScreenPoint(40, -4),
+            new ScreenPoint(60, 4),
+            new ScreenPoint(80, 0)
+        };
+        var smoothed = QuickEditStrokeGeometry.Smooth(raw);
+        if (smoothed[0] != raw[0]
+            || smoothed[^1] != raw[^1]
+            || smoothed.Skip(1).SkipLast(1).Average(point => Math.Abs(point.Y))
+                >= raw.Skip(1).SkipLast(1).Average(point => Math.Abs(point.Y)))
+        {
+            throw new InvalidOperationException("Quick Edit pencil must use the same smooth stroke geometry as annotations.");
         }
     }
 
@@ -591,6 +777,30 @@ internal static class Program
         if (stabilizedNoise >= rawNoise * 0.4)
         {
             throw new InvalidOperationException("Strong final smoothing did not suppress high-frequency pointer noise.");
+        }
+    }
+
+    private static void VerifyPencilUsesBalancedSmoothing()
+    {
+        if (AnnotationRenderer.ResolveStrokeSmoothing(AnnotationTool.Pencil, StrokeSmoothingLevel.Off)
+            != StrokeSmoothingLevel.Balanced)
+        {
+            throw new InvalidOperationException("Pencil must use the same balanced smoothing as the laser trace.");
+        }
+
+        if (AnnotationRenderer.ResolveStrokeSmoothing(AnnotationTool.Highlighter, StrokeSmoothingLevel.Off)
+            != StrokeSmoothingLevel.Balanced)
+        {
+            throw new InvalidOperationException("Highlighter must use the same balanced smoothing as the laser trace.");
+        }
+
+        var tailOpacity = AnnotationRenderer.GetTailDissolveOpacity(segmentIndex: 1, segmentCount: 20, fadeProgress: 0.5);
+        var headOpacity = AnnotationRenderer.GetTailDissolveOpacity(segmentIndex: 19, segmentCount: 20, fadeProgress: 0.5);
+        if (tailOpacity >= headOpacity
+            || tailOpacity is < 0.35 or > 0.65
+            || headOpacity - tailOpacity < 0.25)
+        {
+            throw new InvalidOperationException("Laser trace tail must dissolve continuously without stepping between segments.");
         }
     }
 

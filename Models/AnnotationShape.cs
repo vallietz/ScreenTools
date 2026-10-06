@@ -26,6 +26,8 @@ internal sealed class AnnotationShape
     public double CreatedAtMs { get; set; }
     public int TemporaryVisibleMs { get; set; }
     public int TemporaryFadeMs { get; set; }
+    public int TemporaryLifetimeMs { get; set; }
+    public double TemporaryDissolveSpeedPixelsPerSecond { get; set; }
     public double TextLineHeight => Math.Max(1, FontSize * TextLineHeightFactor);
     internal int GeometryVersion { get; private set; }
 
@@ -49,6 +51,8 @@ internal sealed class AnnotationShape
             CreatedAtMs = CreatedAtMs,
             TemporaryVisibleMs = TemporaryVisibleMs,
             TemporaryFadeMs = TemporaryFadeMs,
+            TemporaryLifetimeMs = TemporaryLifetimeMs,
+            TemporaryDissolveSpeedPixelsPerSecond = TemporaryDissolveSpeedPixelsPerSecond,
             GeometryVersion = GeometryVersion
         };
     }
@@ -104,6 +108,17 @@ internal sealed class AnnotationShape
 
         var progress = Math.Clamp((nowMs - fadeStartMs) / TemporaryFadeMs, 0, 1);
         return 1 - SmoothStep(progress);
+    }
+
+    public double GetTemporaryTailFadeProgress(double nowMs)
+    {
+        if (!IsTemporary || CreatedAtMs <= 0 || TemporaryFadeMs <= 0)
+        {
+            return 0;
+        }
+
+        var fadeStartMs = CreatedAtMs + TemporaryVisibleMs;
+        return Math.Clamp((nowMs - fadeStartMs) / TemporaryFadeMs, 0, 1);
     }
 
     public ScreenRect GetBounds()
